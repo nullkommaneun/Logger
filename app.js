@@ -1,12 +1,8 @@
 /*
- * Waze Korrelations-Logger - v2 "Diagnose-Monster"
+ * Waze Korrelations-Logger - v3 "Stabiler Start"
  * ================================================
- * INKLUSIVE:
- * - GPS (Position, Genauigkeit, Geschwindigkeit)
- * - Netzwerk (Online/Offline)
- * - Bluetooth/Audio (Geräte-Events)
- * - Bewegung (Beschleunigungssensor)
- * - Orientierung (Gyroskop/Kompass)
+ * NEU: Saubere Trennung von Berechtigungs-Anfrage (Pre-Flight Check)
+ * und dem eigentlichen Start der Logger.
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -22,13 +18,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const crashBtn = document.getElementById('crashBtn');
     const downloadBtn = document.getElementById('downloadBtn');
 
-    // --- Logger-Status & Konfiguration ---
+    // --- Logger-Status ---
     let isLogging = false;
     let logEntries = [];
     let geoWatchId = null;
 
-    // --- Sensor-Throttling (WICHTIG!) ---
-    // Wir loggen diese Sensoren nicht 60x pro Sekunde, sondern nur alle X Millisekunden
+    // --- Sensor-Throttling ---
     const SENSOR_THROTTLE_MS = 2000; // 2 Sekunden
     let lastMotionLogTime = 0;
     let lastOrientationLogTime = 0;
@@ -57,6 +52,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ===================================
     // --- SENSOR-HANDLER (Das Herzstück) ---
+    // (Diese Funktionen bleiben unverändert)
     // ===================================
 
     // 1. GPS-Erfolg
@@ -93,22 +89,28 @@ document.addEventListener("DOMContentLoaded", () => {
     // 3. Audio/Bluetooth-Geräte-Änderung
     function logDeviceChange() {
         addLogEntry('BT/AUDIO-EVENT: Geräte-Änderung erkannt!', 'warn');
-        updateDeviceList();
+        updateDeviceList(false); // 'false' = nicht der erste Aufruf
     }
 
     // 4. Geräteliste auslesen (Versuch)
-    async function updateDeviceList() {
+    // Wir fügen ein 'isInitialCall' Flag hinzu, um die Mikrofon-Berechtigung
+    // nur beim allerersten Mal (Pre-Flight Check) anzufragen.
+    async function updateDeviceList(isInitialCall = false) {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
                 addLogEntry("BT/AUDIO-FEHLER: MediaDevices API nicht unterstützt.", 'error');
-                return;
+                return false; // Rückgabe 'false' für Misserfolg
             }
 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                stream.getTracks().forEach(track => track.stop());
-            } catch (permErr) {
-                addLogEntry("BT/AUDIO-INFO: Mikrofon-Zugriff verweigert, Gerätelabels könnten fehlen.", 'warn');
+            if (isInitialCall) {
+                try {
+                    // Nur beim ersten Mal die Berechtigung anfragen
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    stream.getTracks().forEach(track => track.stop());
+                } catch (permErr) {
+                    addLogEntry("BT/AUDIO-INFO: Mikrofon-Zugriff verweigert, Gerätelabels könnten fehlen.", 'warn');
+                    return false; // Rückgabe 'false' für Misserfolg
+                }
             }
 
             const devices = await navigator.mediaDevices.enumerateDevices();
@@ -121,141 +123,173 @@ document.addEventListener("DOMContentLoaded", () => {
             
             const logString = `BT/AUDIO-STATUS: ${audioOutputs.length} Audio-Ausgänge | Namen: [${audioOutputs.join(', ')}]`;
             addLogEntry(logString, 'info');
+            return true; // Rückgabe 'true' für Erfolg
 
         } catch (err) {
             addLogEntry(`BT/AUDIO-FEHLER: ${err.message}`, 'error');
+            return false; // Rückgabe 'false' für Misserfolg
         }
     }
 
-    // 5. NEU: Bewegungssensor (Beschleunigung)
+    // 5. Bewegungssensor (Beschleunigung)
     function logDeviceMotion(event) {
         const now = Date.now();
-        // Throttling: Nur loggen, wenn 2 Sekunden vergangen sind
-        if (now - lastMotionLogTime < SENSOR_THROTTLE_MS) {
-            return; 
-        }
+        if (now - lastMotionLogTime < SENSOR_THROTTLE_MS) return; 
         lastMotionLogTime = now;
-
         const acc = event.accelerationIncludingGravity;
         if (acc && acc.x !== null) {
-            const logData = [
-                `SENSOR-MOTION`,
-                `X: ${acc.x.toFixed(2)}`,
-                `Y: ${acc.y.toFixed(2)}`,
-                `Z: ${acc.z.toFixed(2)}`
-            ];
-            addLogEntry(logData.join(' | '), 'info');
+            addLogEntry(`SENSOR-MOTION | X: ${acc.x.toFixed(2)} | Y: ${acc.y.toFixed(2)} | Z: ${acc.z.toFixed(2)}`, 'info');
         }
     }
 
-    // 6. NEU: Orientierungssensor (Gyroskop/Kompass)
+    // 6. Orientierungssensor (Gyroskop/Kompass)
     function logDeviceOrientation(event) {
         const now = Date.now();
-        // Throttling: Nur loggen, wenn 2 Sekunden vergangen sind
-        if (now - lastOrientationLogTime < SENSOR_THROTTLE_MS) {
-            return;
-        }
+        if (now - lastOrientationLogTime < SENSOR_THROTTLE_MS) return;
         lastOrientationLogTime = now;
-
         if (event.alpha !== null) {
-            const logData = [
-                `SENSOR-ORIENTATION`,
-                `Alpha(Z): ${event.alpha.toFixed(1)}`, // Kompass
-                `Beta(X): ${event.beta.toFixed(1)}`,  // Vor/Zurück
-                `Gamma(Y): ${event.gamma.toFixed(1)}` // Links/Rechts
-            ];
-            addLogEntry(logData.join(' | '), 'info');
+            addLogEntry(`SENSOR-ORIENTATION | Alpha(Z): ${event.alpha.toFixed(1)} | Beta(X): ${event.beta.toFixed(1)} | Gamma(Y): ${event.gamma.toFixed(1)}`, 'info');
         }
     }
 
 
     // ===================================
-    // --- BUTTON-HANDLER ---
+    // --- NEUE STEUERUNGS-FUNKTIONEN ---
     // ===================================
 
-    // START
-    // Wir machen die Funktion "async", um auf Berechtigungen (await) warten zu können
-    startBtn.onclick = async () => {
-        // --- 1. API-Prüfungen ---
-        if (!navigator.geolocation) {
-            alert("Fehler: Geolocation wird nicht unterstützt.");
-            return;
-        }
-        if (!navigator.mediaDevices) {
-            alert("Fehler: MediaDevices (für Bluetooth) wird nicht unterstützt.");
+    /**
+     * NEU: Phase A - Der "Pre-Flight Check"
+     * Fragt alle Berechtigungen nacheinander an.
+     */
+    async function requestAllPermissions() {
+        addLogEntry("Phase A: Fordere Berechtigungen an...");
+        statusEl.textContent = "Berechtigungen anfordern...";
+        
+        let permissions = {
+            gps: false,
+            audio: false,
+            motion: false,
+            orientation: false
+        };
+
+        // 1. GPS-Berechtigung (Trick: getCurrentPosition)
+        try {
+            if (!navigator.geolocation) {
+                throw new Error("Geolocation wird nicht unterstützt.");
+            }
+            await new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+            });
+            permissions.gps = true;
+            addLogEntry("BERECHTIGUNG: GPS erteilt.");
+        } catch (err) {
+            addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error');
         }
 
-        // --- 2. NEU: iOS Sensor-Berechtigungen (Der "Hack") ---
-        // iOS 13+ erfordert eine explizite Nutzer-Aktion, um diese Sensoren zu nutzen
-        let motionGranted = false;
-        let orientationGranted = false;
+        // 2. Audio-Berechtigung (für Geräteliste)
+        permissions.audio = await updateDeviceList(true); // 'true' = erster Aufruf
+        if (permissions.audio) {
+            addLogEntry("BERECHTIGUNG: Audio (für Geräteliste) erteilt.");
+        }
 
-        // Versuch für Bewegungssensor
+        // 3. Bewegungssensor (iOS-spezifisch)
         if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
             try {
-                const permissionState = await DeviceMotionEvent.requestPermission();
-                if (permissionState === 'granted') {
-                    motionGranted = true;
-                    addLogEntry("SENSOR-INFO: Berechtigung für Bewegung erteilt.");
+                const state = await DeviceMotionEvent.requestPermission();
+                if (state === 'granted') {
+                    permissions.motion = true;
+                    addLogEntry("BERECHTIGUNG: Bewegungssensor erteilt.");
                 } else {
-                    addLogEntry("SENSOR-WARN: Berechtigung für Bewegung verweigert.", 'warn');
-                }
-            } catch (err) { /* Ignorieren, wenn Nutzer ablehnt */ }
-        } else {
-            // Nicht-iOS-Gerät (Android), Berechtigung ist implizit
-            motionGranted = true;
-        }
-
-        // Versuch für Orientierungssensor
-        if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
-            try {
-                const permissionState = await DeviceOrientationEvent.requestPermission();
-                if (permissionState === 'granted') {
-                    orientationGranted = true;
-                    addLogEntry("SENSOR-INFO: Berechtigung für Orientierung erteilt.");
-                } else {
-                    addLogEntry("SENSOR-WARN: Berechtigung für Orientierung verweigert.", 'warn');
+                    addLogEntry("BERECHTIGUNG: Bewegungssensor verweigert.", 'warn');
                 }
             } catch (err) { /* Ignorieren */ }
         } else {
-            // Nicht-iOS-Gerät (Android)
-            orientationGranted = true;
+            permissions.motion = true; // Android / Implizit
         }
 
-        // --- 3. Logging-Prozess starten ---
-        isLogging = true;
-        logEntries = [];
-        logAreaEl.value = "";
-        addLogEntry("Logging gestartet (v2: Diagnose-Monster)...");
+        // 4. Orientierungssensor (iOS-spezifisch)
+        if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
+            try {
+                const state = await DeviceOrientationEvent.requestPermission();
+                if (state === 'granted') {
+                    permissions.orientation = true;
+                    addLogEntry("BERECHTIGUNG: Orientierungssensor erteilt.");
+                } else {
+                    addLogEntry("BERECHTIGUNG: Orientierungssensor verweigert.", 'warn');
+                }
+            } catch (err) { /* Ignorieren */ }
+        } else {
+            permissions.orientation = true; // Android / Implizit
+        }
+        
+        addLogEntry("Phase A: Pre-Flight Check beendet.");
+        return permissions;
+    }
 
-        // UI-Status
-        statusEl.textContent = "LOGGING... (Suche GPS)";
+    /**
+     * NEU: Phase B - Startet alle Logger, für die wir Berechtigungen haben.
+     */
+    function startAllLoggers(permissions) {
+        addLogEntry("Phase B: Starte alle Logger...");
+        statusEl.textContent = "LOGGING... (Starte Sensoren)";
+
+        // 1. GPS-Logger
+        if (permissions.gps) {
+            const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
+            geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
+        } else {
+            addLogEntry("GPS-Logger nicht gestartet (Keine Berechtigung).", 'error');
+        }
+
+        // 2. BT/Audio-Logger
+        if (permissions.audio && navigator.mediaDevices) {
+            navigator.mediaDevices.ondevicechange = logDeviceChange;
+        }
+
+        // 3. Bewegungs-Sensor-Logger
+        if (permissions.motion) {
+            window.addEventListener('devicemotion', logDeviceMotion);
+        }
+
+        // 4. Orientierungs-Sensor-Logger
+        if (permissions.orientation) {
+            window.addEventListener('deviceorientation', logDeviceOrientation);
+        }
+        
+        isLogging = true;
+        // UI-Status aktualisieren
         startBtn.disabled = true;
         stopBtn.disabled = false;
         crashBtn.disabled = false;
         downloadBtn.disabled = true;
+    }
 
-        // 4. Alle Logger registrieren
-        
-        // GPS-Logger
-        const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
-        geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
+    // ===================================
+    // --- BUTTON-HANDLER (Überarbeitet) ---
+    // ===================================
 
-        // BT/Audio-Logger
-        if (navigator.mediaDevices) {
-            navigator.mediaDevices.ondevicechange = logDeviceChange;
-            updateDeviceList();
+    // START
+    startBtn.onclick = async () => {
+        // UI für den Start-Prozess
+        startBtn.disabled = true;
+        statusEl.textContent = "Starte...";
+        logEntries = [];
+        logAreaEl.value = "";
+        addLogEntry("Logging-Prozess angefordert (v3)...");
+
+        // Führe Phase A aus
+        const permissions = await requestAllPermissions();
+
+        // Prüfen, ob wir überhaupt weitermachen können
+        if (!permissions.gps) {
+            addLogEntry("Kritischer Fehler: GPS-Berechtigung nicht erteilt. Logging nicht gestartet.", 'error');
+            statusEl.textContent = "Fehler: GPS benötigt!";
+            startBtn.disabled = false; // Start-Button wieder freigeben
+            return;
         }
 
-        // Bewegungs-Sensor-Logger
-        if (motionGranted) {
-            window.addEventListener('devicemotion', logDeviceMotion);
-        }
-
-        // Orientierungs-Sensor-Logger
-        if (orientationGranted) {
-            window.addEventListener('deviceorientation', logDeviceOrientation);
-        }
+        // Führe Phase B aus
+        startAllLoggers(permissions);
     };
 
     // STOP
@@ -284,7 +318,7 @@ document.addEventListener("DOMContentLoaded", () => {
         downloadBtn.disabled = false; 
     };
 
-    // ABSTURZ MARKIEREN
+    // ABSTURZ MARKIEREN (unverändert)
     crashBtn.onclick = () => {
         if (!isLogging) return;
         addLogEntry("\n--- !!! ABSTURZ VOM NUTZER MARKIERT !!! ---\n", 'warn');
@@ -297,7 +331,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }, 2000);
     };
 
-    // DOWNLOAD
+    // DOWNLOAD (unverändert)
     downloadBtn.onclick = () => {
         if (logEntries.length === 0) {
             alert("Keine Logs zum Herunterladen vorhanden.");
@@ -306,7 +340,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain' });
-        const filename = `waze_log_v2_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v3_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
         
         a.href = URL.createObjectURL(blob);
@@ -316,5 +350,3 @@ document.addEventListener("DOMContentLoaded", () => {
         document.body.removeChild(a);
     };
 });
-
-
