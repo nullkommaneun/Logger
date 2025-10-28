@@ -1,4 +1,4 @@
-/* Das ist die "Style"-Schicht - unser Design */
+/* Das ist die "Style"-Schicht - v4 */
 :root {
     --bg-color: #1c1c1e;
     --text-color: #f0f0f0;
@@ -16,7 +16,7 @@ body {
     color: var(--text-color);
     padding: 20px;
     margin: 0;
-    overscroll-behavior: none; /* Verhindert "Pull-to-Refresh" */
+    overscroll-behavior: none;
 }
 
 h2 {
@@ -59,10 +59,13 @@ button:disabled {
     cursor: not-allowed;
 }
 
+/* NEUE BUTTON-STILE FÜR DIE TRENNUNG */
+#permissionBtn { background-color: var(--blue); color: white; }
 #startBtn { background-color: var(--green); color: white; }
 #stopBtn { background-color: var(--red); color: white; }
 #crashBtn { background-color: var(--orange); color: white; }
-#downloadBtn { background-color: var(--blue); color: white; }
+#downloadBtn { background-color: var(--grey); color: white; }
+
 
 #logArea {
     width: calc(100% - 20px); /* 100% - padding */
@@ -77,4 +80,5 @@ button:disabled {
     font-size: 0.9em;
     resize: vertical;
 }
+
 
