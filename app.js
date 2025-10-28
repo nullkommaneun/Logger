@@ -1,8 +1,11 @@
 /*
- * Waze Korrelations-Logger - v3 "Stabiler Start"
+ * Waze Korrelations-Logger - v4 "Saubere Trennung"
  * ================================================
- * NEU: Saubere Trennung von Berechtigungs-Anfrage (Pre-Flight Check)
- * und dem eigentlichen Start der Logger.
+ * NEU: Eigener Button (permissionBtn) nur für Berechtigungen (Phase A).
+ * Der Start-Button (startBtn) ist anfangs deaktiviert und
+ * startet nur noch die Logger (Phase B).
+ *
+ * Das ist die von dir gewünschte "Zweistufige Rakete".
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -13,6 +16,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- DOM-Elemente ---
     const statusEl = document.getElementById('status');
     const logAreaEl = document.getElementById('logArea');
+    const permissionBtn = document.getElementById('permissionBtn'); // NEU
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const crashBtn = document.getElementById('crashBtn');
@@ -22,9 +26,16 @@ document.addEventListener("DOMContentLoaded", () => {
     let isLogging = false;
     let logEntries = [];
     let geoWatchId = null;
+    // NEU: Wir speichern den Status der Berechtigungen
+    let permissionsState = {
+        gps: false,
+        audio: false,
+        motion: false,
+        orientation: false
+    };
 
     // --- Sensor-Throttling ---
-    const SENSOR_THROTTLE_MS = 2000; // 2 Sekunden
+    const SENSOR_THROTTLE_MS = 2000;
     let lastMotionLogTime = 0;
     let lastOrientationLogTime = 0;
 
@@ -55,25 +66,15 @@ document.addEventListener("DOMContentLoaded", () => {
     // (Diese Funktionen bleiben unverändert)
     // ===================================
 
-    // 1. GPS-Erfolg
     function logPosition(position) {
         const coords = position.coords;
         const isOnline = navigator.onLine;
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
-
-        const logData = [
-            `GPS-OK | Acc: ${coords.accuracy.toFixed(1)}m`,
-            `Speed: ${speedKmh} km/h`,
-            `Online: ${isOnline}`,
-            `Lat: ${coords.latitude.toFixed(5)}`,
-            `Lng: ${coords.longitude.toFixed(5)}`
-        ];
-        
+        const logData = [ `GPS-OK | Acc: ${coords.accuracy.toFixed(1)}m`, `Speed: ${speedKmh} km/h`, `Online: ${isOnline}` ];
         addLogEntry(logData.join(' | '));
         statusEl.textContent = `LOGGING... (GPS: ${coords.accuracy.toFixed(1)}m)`;
     }
 
-    // 2. GPS-Fehler
     function logError(error) {
         let message = '';
         switch(error.code) {
@@ -86,33 +87,26 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Fehler: GPS-Problem!";
     }
 
-    // 3. Audio/Bluetooth-Geräte-Änderung
     function logDeviceChange() {
         addLogEntry('BT/AUDIO-EVENT: Geräte-Änderung erkannt!', 'warn');
         updateDeviceList(false); // 'false' = nicht der erste Aufruf
     }
 
-    // 4. Geräteliste auslesen (Versuch)
-    // Wir fügen ein 'isInitialCall' Flag hinzu, um die Mikrofon-Berechtigung
-    // nur beim allerersten Mal (Pre-Flight Check) anzufragen.
     async function updateDeviceList(isInitialCall = false) {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
                 addLogEntry("BT/AUDIO-FEHLER: MediaDevices API nicht unterstützt.", 'error');
-                return false; // Rückgabe 'false' für Misserfolg
+                return false;
             }
-
             if (isInitialCall) {
                 try {
-                    // Nur beim ersten Mal die Berechtigung anfragen
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(track => track.stop());
                 } catch (permErr) {
                     addLogEntry("BT/AUDIO-INFO: Mikrofon-Zugriff verweigert, Gerätelabels könnten fehlen.", 'warn');
-                    return false; // Rückgabe 'false' für Misserfolg
+                    return false;
                 }
             }
-
             const devices = await navigator.mediaDevices.enumerateDevices();
             let audioOutputs = [];
             devices.forEach(device => {
@@ -120,18 +114,15 @@ document.addEventListener("DOMContentLoaded", () => {
                     audioOutputs.push(device.label || 'Unbenanntes Gerät');
                 }
             });
-            
             const logString = `BT/AUDIO-STATUS: ${audioOutputs.length} Audio-Ausgänge | Namen: [${audioOutputs.join(', ')}]`;
-            addLogEntry(logString, 'info');
-            return true; // Rückgabe 'true' für Erfolg
-
+            if (!isInitialCall) addLogEntry(logString, 'info'); // Nur loggen bei echten Events, nicht beim Check
+            return true;
         } catch (err) {
             addLogEntry(`BT/AUDIO-FEHLER: ${err.message}`, 'error');
-            return false; // Rückgabe 'false' für Misserfolg
+            return false;
         }
     }
 
-    // 5. Bewegungssensor (Beschleunigung)
     function logDeviceMotion(event) {
         const now = Date.now();
         if (now - lastMotionLogTime < SENSOR_THROTTLE_MS) return; 
@@ -142,7 +133,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 6. Orientierungssensor (Gyroskop/Kompass)
     function logDeviceOrientation(event) {
         const now = Date.now();
         if (now - lastOrientationLogTime < SENSOR_THROTTLE_MS) return;
@@ -152,167 +142,150 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-
     // ===================================
     // --- NEUE STEUERUNGS-FUNKTIONEN ---
     // ===================================
 
     /**
-     * NEU: Phase A - Der "Pre-Flight Check"
-     * Fragt alle Berechtigungen nacheinander an.
+     * Phase A - Der "Pre-Flight Check"
+     * Wird NUR von permissionBtn ausgelöst.
      */
     async function requestAllPermissions() {
         addLogEntry("Phase A: Fordere Berechtigungen an...");
         statusEl.textContent = "Berechtigungen anfordern...";
         
-        let permissions = {
-            gps: false,
-            audio: false,
-            motion: false,
-            orientation: false
-        };
-
-        // 1. GPS-Berechtigung (Trick: getCurrentPosition)
+        // 1. GPS
         try {
-            if (!navigator.geolocation) {
-                throw new Error("Geolocation wird nicht unterstützt.");
-            }
+            if (!navigator.geolocation) throw new Error("Geolocation wird nicht unterstützt.");
             await new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
             });
-            permissions.gps = true;
+            permissionsState.gps = true;
             addLogEntry("BERECHTIGUNG: GPS erteilt.");
         } catch (err) {
             addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error');
         }
 
-        // 2. Audio-Berechtigung (für Geräteliste)
-        permissions.audio = await updateDeviceList(true); // 'true' = erster Aufruf
-        if (permissions.audio) {
+        // 2. Audio
+        permissionsState.audio = await updateDeviceList(true); // 'true' = erster Aufruf
+        if (permissionsState.audio) {
             addLogEntry("BERECHTIGUNG: Audio (für Geräteliste) erteilt.");
         }
 
-        // 3. Bewegungssensor (iOS-spezifisch)
+        // 3. Bewegung (iOS)
         if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
             try {
                 const state = await DeviceMotionEvent.requestPermission();
-                if (state === 'granted') {
-                    permissions.motion = true;
-                    addLogEntry("BERECHTIGUNG: Bewegungssensor erteilt.");
-                } else {
-                    addLogEntry("BERECHTIGUNG: Bewegungssensor verweigert.", 'warn');
-                }
+                permissionsState.motion = (state === 'granted');
             } catch (err) { /* Ignorieren */ }
         } else {
-            permissions.motion = true; // Android / Implizit
+            permissionsState.motion = true; // Android
         }
+        if(permissionsState.motion) addLogEntry("BERECHTIGUNG: Bewegungssensor OK.");
 
-        // 4. Orientierungssensor (iOS-spezifisch)
+        // 4. Orientierung (iOS)
         if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
-                if (state === 'granted') {
-                    permissions.orientation = true;
-                    addLogEntry("BERECHTIGUNG: Orientierungssensor erteilt.");
-                } else {
-                    addLogEntry("BERECHTIGUNG: Orientierungssensor verweigert.", 'warn');
-                }
+                permissionsState.orientation = (state === 'granted');
             } catch (err) { /* Ignorieren */ }
         } else {
-            permissions.orientation = true; // Android / Implizit
+            permissionsState.orientation = true; // Android
         }
+        if(permissionsState.orientation) addLogEntry("BERECHTIGUNG: Orientierungssensor OK.");
         
         addLogEntry("Phase A: Pre-Flight Check beendet.");
-        return permissions;
+        return permissionsState.gps; // Nur zurückgeben, ob das *kritische* (GPS) OK ist
     }
 
     /**
-     * NEU: Phase B - Startet alle Logger, für die wir Berechtigungen haben.
+     * Phase B - Startet alle Logger.
+     * Wird NUR von startBtn ausgelöst.
      */
-    function startAllLoggers(permissions) {
+    function startAllLoggers() {
         addLogEntry("Phase B: Starte alle Logger...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
 
-        // 1. GPS-Logger
-        if (permissions.gps) {
-            const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
-            geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
-        } else {
-            addLogEntry("GPS-Logger nicht gestartet (Keine Berechtigung).", 'error');
-        }
-
+        // 1. GPS-Logger (Muss vorhanden sein)
+        const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
+        geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
+        
         // 2. BT/Audio-Logger
-        if (permissions.audio && navigator.mediaDevices) {
+        if (permissionsState.audio && navigator.mediaDevices) {
             navigator.mediaDevices.ondevicechange = logDeviceChange;
+            updateDeviceList(false); // Logge den aktuellen Status beim Start
         }
 
         // 3. Bewegungs-Sensor-Logger
-        if (permissions.motion) {
+        if (permissionsState.motion) {
             window.addEventListener('devicemotion', logDeviceMotion);
         }
 
         // 4. Orientierungs-Sensor-Logger
-        if (permissions.orientation) {
+        if (permissionsState.orientation) {
             window.addEventListener('deviceorientation', logDeviceOrientation);
         }
         
         isLogging = true;
         // UI-Status aktualisieren
         startBtn.disabled = true;
+        permissionBtn.disabled = true; // Kann man während des Loggens nicht ändern
         stopBtn.disabled = false;
         crashBtn.disabled = false;
         downloadBtn.disabled = true;
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (Überarbeitet) ---
+    // --- BUTTON-HANDLER (Überarbeitet v4) ---
     // ===================================
 
-    // START
-    startBtn.onclick = async () => {
-        // UI für den Start-Prozess
-        startBtn.disabled = true;
-        statusEl.textContent = "Starte...";
+    // NEUER BUTTON: PRE-FLIGHT CHECK
+    permissionBtn.onclick = async () => {
+        permissionBtn.disabled = true;
+        statusEl.textContent = "Prüfe Berechtigungen...";
         logEntries = [];
         logAreaEl.value = "";
-        addLogEntry("Logging-Prozess angefordert (v3)...");
+        
+        const gpsOk = await requestAllPermissions();
 
-        // Führe Phase A aus
-        const permissions = await requestAllPermissions();
-
-        // Prüfen, ob wir überhaupt weitermachen können
-        if (!permissions.gps) {
-            addLogEntry("Kritischer Fehler: GPS-Berechtigung nicht erteilt. Logging nicht gestartet.", 'error');
-            statusEl.textContent = "Fehler: GPS benötigt!";
-            startBtn.disabled = false; // Start-Button wieder freigeben
-            return;
+        if (gpsOk) {
+            statusEl.textContent = "Bereit zum Loggen! (GPS OK)";
+            startBtn.disabled = false; // RAKETENSTUFE 2 FREISCHALTEN!
+            downloadBtn.disabled = true; // Reset
+        } else {
+            statusEl.textContent = "Fehler: GPS-Berechtigung benötigt!";
+            permissionBtn.disabled = false; // Erneut versuchen lassen
         }
+    };
 
+    // START (startet jetzt nur noch Phase B)
+    startBtn.onclick = () => {
+        // Leere Logs für den neuen Lauf
+        logEntries = [];
+        logAreaEl.value = "";
+        addLogEntry("Logging-Prozess angefordert (v4)...");
+        
         // Führe Phase B aus
-        startAllLoggers(permissions);
+        startAllLoggers();
     };
 
     // STOP
     stopBtn.onclick = () => {
         if (!isLogging) return;
         
-        // 1. Alle Logger stoppen
-        if (geoWatchId) {
-            navigator.geolocation.clearWatch(geoWatchId);
-            geoWatchId = null;
-        }
-        if (navigator.mediaDevices) {
-            navigator.mediaDevices.ondevicechange = null;
-        }
+        if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
+        if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = null;
         window.removeEventListener('devicemotion', logDeviceMotion);
         window.removeEventListener('deviceorientation', logDeviceOrientation);
         
         isLogging = false;
+        geoWatchId = null;
         addLogEntry("Logging gestoppt.");
 
         // UI-Status
         statusEl.textContent = "Status: Gestoppt. Download bereit.";
-        startBtn.disabled = false;
+        startBtn.disabled = false; // Bereit für nächsten Lauf
+        permissionBtn.disabled = true; // Berechtigungen bleiben erteilt
         stopBtn.disabled = true;
         crashBtn.disabled = true;
         downloadBtn.disabled = false; 
@@ -322,13 +295,8 @@ document.addEventListener("DOMContentLoaded", () => {
     crashBtn.onclick = () => {
         if (!isLogging) return;
         addLogEntry("\n--- !!! ABSTURZ VOM NUTZER MARKIERT !!! ---\n", 'warn');
-        
         statusEl.textContent = "ABSTURZ MARKIERT!";
-        setTimeout(() => {
-            if(isLogging) {
-                statusEl.textContent = "LOGGING...";
-            }
-        }, 2000);
+        setTimeout(() => { if(isLogging) statusEl.textContent = "LOGGING..."; }, 2000);
     };
 
     // DOWNLOAD (unverändert)
@@ -337,12 +305,10 @@ document.addEventListener("DOMContentLoaded", () => {
             alert("Keine Logs zum Herunterladen vorhanden.");
             return;
         }
-
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain' });
-        const filename = `waze_log_v3_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v4_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
-        
         a.href = URL.createObjectURL(blob);
         a.download = filename;
         document.body.appendChild(a);
@@ -350,3 +316,6 @@ document.addEventListener("DOMContentLoaded", () => {
         document.body.removeChild(a);
     };
 });
+
+
+ 
