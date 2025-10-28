@@ -1,10 +1,17 @@
-/* Das ist die "Controller"-Schicht - unsere Logik */
-
-// Strikten Modus verwenden, um sauberen Code zu erzwingen
+/*
+ * Waze Korrelations-Logger - v2 "Diagnose-Monster"
+ * ================================================
+ * INKLUSIVE:
+ * - GPS (Position, Genauigkeit, Geschwindigkeit)
+ * - Netzwerk (Online/Offline)
+ * - Bluetooth/Audio (Geräte-Events)
+ * - Bewegung (Beschleunigungssensor)
+ * - Orientierung (Gyroskop/Kompass)
+ *
+ * Gebaut von deinem Sparingpartner.
+ */
 "use strict";
 
-// --- DOM-Elemente sicher abrufen ---
-// Wir warten, bis das gesamte HTML geladen ist, bevor wir die Elemente suchen
 document.addEventListener("DOMContentLoaded", () => {
     
     // --- DOM-Elemente ---
@@ -15,10 +22,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const crashBtn = document.getElementById('crashBtn');
     const downloadBtn = document.getElementById('downloadBtn');
 
-    // --- Logger-Status ---
+    // --- Logger-Status & Konfiguration ---
     let isLogging = false;
     let logEntries = [];
     let geoWatchId = null;
+
+    // --- Sensor-Throttling (WICHTIG!) ---
+    // Wir loggen diese Sensoren nicht 60x pro Sekunde, sondern nur alle X Millisekunden
+    const SENSOR_THROTTLE_MS = 2000; // 2 Sekunden
+    let lastMotionLogTime = 0;
+    let lastOrientationLogTime = 0;
+
 
     // --- Universal-Funktion zum Loggen ---
     function getTimestamp() {
@@ -29,29 +43,26 @@ document.addEventListener("DOMContentLoaded", () => {
         const logString = `${getTimestamp()} | ${message}`;
         logEntries.push(logString);
 
-        // Log-Level in der Konsole ausgeben (für Debugging)
         if (level === 'error') console.error(logString);
         else if (level === 'warn') console.warn(logString);
         else console.log(logString);
 
-        // Textfeld aktualisieren
         updateLogDisplay();
     }
 
     function updateLogDisplay() {
-        // Nur die letzten 100 Zeilen anzeigen, um Leistung zu sparen
         logAreaEl.value = logEntries.slice(-100).join('\n');
-        logAreaEl.scrollTop = logAreaEl.scrollHeight; // Auto-Scroll
+        logAreaEl.scrollTop = logAreaEl.scrollHeight;
     }
 
-    // --- Sensor-Handler (Das Herzstück) ---
+    // ===================================
+    // --- SENSOR-HANDLER (Das Herzstück) ---
+    // ===================================
 
     // 1. GPS-Erfolg
     function logPosition(position) {
         const coords = position.coords;
         const isOnline = navigator.onLine;
-        
-        // Geschwindigkeit von m/s in km/h umrechnen (oder 0 anzeigen)
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
 
         const logData = [
@@ -82,29 +93,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // 3. Audio/Bluetooth-Geräte-Änderung
     function logDeviceChange() {
         addLogEntry('BT/AUDIO-EVENT: Geräte-Änderung erkannt!', 'warn');
-        // Wir aktualisieren sofort die Geräteliste
         updateDeviceList();
     }
 
     // 4. Geräteliste auslesen (Versuch)
     async function updateDeviceList() {
         try {
-            // Prüfen, ob die API überhaupt existiert
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
                 addLogEntry("BT/AUDIO-FEHLER: MediaDevices API nicht unterstützt.", 'error');
                 return;
             }
 
-            // Trick: Berechtigung für Mikrofon anfragen, um detaillierte Labels zu erhalten.
-            // Ohne das sind die Labels aus Datenschutzgründen oft leer.
-            // Wir müssen den Stream nicht mal benutzen, nur anfragen.
             try {
-                // Wir nutzen .getUserMedia nur, wenn es noch nicht erteilt wurde
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                // Stream sofort wieder stoppen, wir brauchen ihn nicht, nur die Berechtigung
                 stream.getTracks().forEach(track => track.stop());
             } catch (permErr) {
-                // Nutzer hat Berechtigung verweigert
                 addLogEntry("BT/AUDIO-INFO: Mikrofon-Zugriff verweigert, Gerätelabels könnten fehlen.", 'warn');
             }
 
@@ -112,7 +115,6 @@ document.addEventListener("DOMContentLoaded", () => {
             let audioOutputs = [];
             devices.forEach(device => {
                 if (device.kind === 'audiooutput') {
-                    // Label loggen, oder 'Unbenannt' wenn leer
                     audioOutputs.push(device.label || 'Unbenanntes Gerät');
                 }
             });
@@ -125,12 +127,56 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    // 5. NEU: Bewegungssensor (Beschleunigung)
+    function logDeviceMotion(event) {
+        const now = Date.now();
+        // Throttling: Nur loggen, wenn 2 Sekunden vergangen sind
+        if (now - lastMotionLogTime < SENSOR_THROTTLE_MS) {
+            return; 
+        }
+        lastMotionLogTime = now;
 
-    // --- Button-Handler ---
+        const acc = event.accelerationIncludingGravity;
+        if (acc && acc.x !== null) {
+            const logData = [
+                `SENSOR-MOTION`,
+                `X: ${acc.x.toFixed(2)}`,
+                `Y: ${acc.y.toFixed(2)}`,
+                `Z: ${acc.z.toFixed(2)}`
+            ];
+            addLogEntry(logData.join(' | '), 'info');
+        }
+    }
+
+    // 6. NEU: Orientierungssensor (Gyroskop/Kompass)
+    function logDeviceOrientation(event) {
+        const now = Date.now();
+        // Throttling: Nur loggen, wenn 2 Sekunden vergangen sind
+        if (now - lastOrientationLogTime < SENSOR_THROTTLE_MS) {
+            return;
+        }
+        lastOrientationLogTime = now;
+
+        if (event.alpha !== null) {
+            const logData = [
+                `SENSOR-ORIENTATION`,
+                `Alpha(Z): ${event.alpha.toFixed(1)}`, // Kompass
+                `Beta(X): ${event.beta.toFixed(1)}`,  // Vor/Zurück
+                `Gamma(Y): ${event.gamma.toFixed(1)}` // Links/Rechts
+            ];
+            addLogEntry(logData.join(' | '), 'info');
+        }
+    }
+
+
+    // ===================================
+    // --- BUTTON-HANDLER ---
+    // ===================================
 
     // START
-    startBtn.onclick = () => {
-        // Prüfen, ob die APIs da sind
+    // Wir machen die Funktion "async", um auf Berechtigungen (await) warten zu können
+    startBtn.onclick = async () => {
+        // --- 1. API-Prüfungen ---
         if (!navigator.geolocation) {
             alert("Fehler: Geolocation wird nicht unterstützt.");
             return;
@@ -139,10 +185,48 @@ document.addEventListener("DOMContentLoaded", () => {
             alert("Fehler: MediaDevices (für Bluetooth) wird nicht unterstützt.");
         }
 
+        // --- 2. NEU: iOS Sensor-Berechtigungen (Der "Hack") ---
+        // iOS 13+ erfordert eine explizite Nutzer-Aktion, um diese Sensoren zu nutzen
+        let motionGranted = false;
+        let orientationGranted = false;
+
+        // Versuch für Bewegungssensor
+        if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
+            try {
+                const permissionState = await DeviceMotionEvent.requestPermission();
+                if (permissionState === 'granted') {
+                    motionGranted = true;
+                    addLogEntry("SENSOR-INFO: Berechtigung für Bewegung erteilt.");
+                } else {
+                    addLogEntry("SENSOR-WARN: Berechtigung für Bewegung verweigert.", 'warn');
+                }
+            } catch (err) { /* Ignorieren, wenn Nutzer ablehnt */ }
+        } else {
+            // Nicht-iOS-Gerät (Android), Berechtigung ist implizit
+            motionGranted = true;
+        }
+
+        // Versuch für Orientierungssensor
+        if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
+            try {
+                const permissionState = await DeviceOrientationEvent.requestPermission();
+                if (permissionState === 'granted') {
+                    orientationGranted = true;
+                    addLogEntry("SENSOR-INFO: Berechtigung für Orientierung erteilt.");
+                } else {
+                    addLogEntry("SENSOR-WARN: Berechtigung für Orientierung verweigert.", 'warn');
+                }
+            } catch (err) { /* Ignorieren */ }
+        } else {
+            // Nicht-iOS-Gerät (Android)
+            orientationGranted = true;
+        }
+
+        // --- 3. Logging-Prozess starten ---
         isLogging = true;
-        logEntries = []; // Altes Log leeren
+        logEntries = [];
         logAreaEl.value = "";
-        addLogEntry("Logging gestartet...");
+        addLogEntry("Logging gestartet (v2: Diagnose-Monster)...");
 
         // UI-Status
         statusEl.textContent = "LOGGING... (Suche GPS)";
@@ -151,14 +235,26 @@ document.addEventListener("DOMContentLoaded", () => {
         crashBtn.disabled = false;
         downloadBtn.disabled = true;
 
-        // 1. GPS-Logger starten
+        // 4. Alle Logger registrieren
+        
+        // GPS-Logger
         const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
         geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
 
-        // 2. BT/Audio-Logger starten (falls vorhanden)
+        // BT/Audio-Logger
         if (navigator.mediaDevices) {
             navigator.mediaDevices.ondevicechange = logDeviceChange;
-            updateDeviceList(); // Initialen Status loggen
+            updateDeviceList();
+        }
+
+        // Bewegungs-Sensor-Logger
+        if (motionGranted) {
+            window.addEventListener('devicemotion', logDeviceMotion);
+        }
+
+        // Orientierungs-Sensor-Logger
+        if (orientationGranted) {
+            window.addEventListener('deviceorientation', logDeviceOrientation);
         }
     };
 
@@ -166,16 +262,16 @@ document.addEventListener("DOMContentLoaded", () => {
     stopBtn.onclick = () => {
         if (!isLogging) return;
         
-        // 1. GPS-Logger stoppen
+        // 1. Alle Logger stoppen
         if (geoWatchId) {
             navigator.geolocation.clearWatch(geoWatchId);
             geoWatchId = null;
         }
-        
-        // 2. BT/Audio-Logger stoppen
         if (navigator.mediaDevices) {
             navigator.mediaDevices.ondevicechange = null;
         }
+        window.removeEventListener('devicemotion', logDeviceMotion);
+        window.removeEventListener('deviceorientation', logDeviceOrientation);
         
         isLogging = false;
         addLogEntry("Logging gestoppt.");
@@ -185,7 +281,7 @@ document.addEventListener("DOMContentLoaded", () => {
         startBtn.disabled = false;
         stopBtn.disabled = true;
         crashBtn.disabled = true;
-        downloadBtn.disabled = false; // Download freischalten!
+        downloadBtn.disabled = false; 
     };
 
     // ABSTURZ MARKIEREN
@@ -193,11 +289,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!isLogging) return;
         addLogEntry("\n--- !!! ABSTURZ VOM NUTZER MARKIERT !!! ---\n", 'warn');
         
-        // Visuelles Feedback
         statusEl.textContent = "ABSTURZ MARKIERT!";
         setTimeout(() => {
             if(isLogging) {
-                // Status zurücksetzen, aber nur wenn wir noch loggen
                 statusEl.textContent = "LOGGING...";
             }
         }, 2000);
@@ -210,23 +304,17 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        // Gesamtes Log als Text-String
         const logData = logEntries.join('\n');
-        // Als Blob (Binärdatei) erstellen
         const blob = new Blob([logData], { type: 'text/plain' });
-
-        // Dateinamen mit Zeitstempel erstellen
-        const filename = `waze_log_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
-
-        // Temporären Download-Link erstellen und klicken
+        const filename = `waze_log_v2_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
+        
         a.href = URL.createObjectURL(blob);
         a.download = filename;
-        
-        document.body.appendChild(a); // Nötig für Firefox
+        document.body.appendChild(a);
         a.click();
-        document.body.removeChild(a); // Aufräumen
+        document.body.removeChild(a);
     };
 });
 
- 
+
