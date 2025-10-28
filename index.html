@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Waze Korrelations-Logger</title>
+    <!-- 1. Verknüpfung zur CSS-Datei -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <h2>Waze Korrelations-Logger</h2>
+    <p>Bitte GPS-Berechtigung erteilen und Bildschirm anlassen.</p>
+
+    <!-- Das ist die "View" - unsere Benutzeroberfläche -->
+    <div id="status">Status: Bereit</div>
+
+    <button id="startBtn">START LOGGING</button>
+    <button id="stopBtn" disabled>STOP LOGGING</button>
+    <button id="crashBtn" disabled>!! ABSTURZ MARKIERT !!</button>
+    <button id="downloadBtn" disabled>LOG HERUNTERLADEN</button>
+
+    <textarea id="logArea" readonly>Log-Einträge werden hier angezeigt...</textarea>
+
+    <!-- 2. Verknüpfung zur JavaScript-Datei (am Ende des Bodys) -->
+    <!-- 'defer' sorgt dafür, dass das Script erst nach dem HTML-Laden ausgeführt wird -->
+    <script src="app.js" defer></script>
+</body>
+</html>
+
+
