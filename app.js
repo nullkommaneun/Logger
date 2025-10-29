@@ -1,15 +1,23 @@
 /*
- * Waze Korrelations-Logger - v8 "Schlagloch-Detektor"
+ * Waze Korrelations-Logger - v9 "BT-Polling-Hack"
  * ==================================================
  *
- * OPTIMIERUNG (Der Sparingpartner-Plan v8):
- * 1. Die "Jolt Detection" (Stoßerkennung) löst jetzt
- * AUTOMATISCH einen Flugschreiber-Dump aus.
- * 2. Die Dump-Logik wurde in eine eigene Funktion
- * `dumpFlightRecorder()` ausgelagert, damit
- * beide (manueller Button + Jolt) sie nutzen können.
+ * FEHLERBEHEBUNG (aus Log v8):
+ * 1. Der 'ondevicechange'-Listener ist unzuverlässig und
+ * hat die Verbindung zum Auto (Wireless AA) nicht erkannt.
  *
- * Das ist jetzt eine echte Blackbox.
+ * OPTIMIERUNG (v9):
+ * 1. Der 'ondevicechange'-Listener wird ENTFERNT.
+ * 2. Er wird durch einen "Polling"-Timer (setInterval) ersetzt.
+ * 3. Alle 5 Sekunden prüft die App jetzt AKTIV die BT/Audio-
+ * Geräteliste.
+ * 4. Eine neue "stateful" Funktion loggt NUR, wenn sich
+ * die Geräteliste TATSÄCHLICH ändert.
+ *
+ * Das "Schwarze Loch v2" (fehlendes BT-Event) wird hiermit
+ * geschlossen.
+ *
+ * Gebaut von deinem Sparingpartner.
  */
 "use strict";
 
@@ -30,6 +38,11 @@ document.addEventListener("DOMContentLoaded", () => {
     let geoWatchId = null;
     let permissionsState = { gps: false, audio: false, motion: false, orientation: false };
 
+    // --- v9: BT-Polling-Status ---
+    let audioCheckInterval = null;
+    let lastAudioDeviceNames = ""; // Unser neuer "Speicher"
+    const AUDIO_POLL_INTERVAL_MS = 5000; // Alle 5 Sekunden
+
     // --- v6: DEBUG Heartbeat Flags ---
     let motionSensorHasFired = false;
     let orientationSensorHasFired = false;
@@ -37,8 +50,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- v5: Flugschreiber & Jolt Detection ---
     let flightRecorderBuffer = [];
     const FLIGHT_RECORDER_DURATION_MS = 2500;
-    const JOLT_THRESHOLD_MS2 = 25.0; // 25 m/s^2 (ca. 2.5G über der Ruhe)
-    const JOLT_COOLDOWN_MS = 5000; // 5 Sek. Cooldown nach einem Stoß
+    const JOLT_THRESHOLD_MS2 = 25.0; 
+    const JOLT_COOLDOWN_MS = 5000; 
     let lastJoltTime = 0;
 
     // --- Universal-Funktion zum Loggen (ins Haupt-Log) ---
@@ -71,11 +84,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // --- v8: NEUE ausgelagerte Dump-Funktion ---
-    /**
-     * Liest den Flugschreiber-Puffer aus und schreibt ihn
-     * formatiert in das Haupt-Log.
-     */
+    // --- v8: Ausgelagerte Dump-Funktion ---
     function dumpFlightRecorder(markerTime, reason) {
         addLogEntry(`\n--- !!! ${reason} (${markerTime}) !!! ---`, 'warn');
         addLogEntry(`--- START FLUGSCHREIBER-DUMP (Letzte ${FLIGHT_RECORDER_DURATION_MS}ms) ---`, 'warn');
@@ -83,10 +92,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (flightRecorderBuffer.length === 0) {
             addLogEntry(" (Flugschreiber-Puffer ist leer) ", 'warn');
         } else {
-            // Gehe durch eine KOPIE des Puffers
             [...flightRecorderBuffer].forEach(entry => {
                 const timeDiff = new Date(markerTime).getTime() - entry.timestamp;
-                const timeAgo = (timeDiff / 1000).toFixed(3); // z.B. "1.234s zuvor"
+                const timeAgo = (timeDiff / 1000).toFixed(3);
                 addLogEntry(`[T-${timeAgo}s] | ${entry.type} | ${entry.dataString}`, 'info');
             });
         }
@@ -94,12 +102,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- SENSOR-HANDLER (Überarbeitet v8) ---
+    // --- SENSOR-HANDLER (Überarbeitet v9) ---
     // ===================================
 
     // 1. GPS-Erfolg
     function logPosition(position) {
-        // ... (identisch zu v7)
+        // (identisch zu v8)
         const coords = position.coords;
         const isOnline = navigator.onLine;
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
@@ -110,7 +118,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 2. GPS-Fehler
     function logError(error) {
-        // ... (identisch zu v7)
+        // (identisch zu v8)
         let message = '';
         switch(error.code) {
             case error.PERMISSION_DENIED: message = "GPS-Zugriff verweigert"; break;
@@ -122,21 +130,17 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Fehler: GPS-Problem!";
     }
 
-    // 3. Audio/Bluetooth-Geräte-Änderung
-    function logDeviceChange() {
-        // ... (identisch zu v7)
-        addLogEntry('BT/AUDIO-EVENT: Geräte-Änderung erkannt!', 'warn');
-        updateDeviceList(false);
-    }
+    // 3. (GELÖSCHT) logDeviceChange() - War unzuverlässig.
 
-    // 4. Geräteliste auslesen
-    async function updateDeviceList(isInitialCall = false) {
-        // ... (identisch zu v7)
+    // 4. v9: Intelligente Audio-Polling-Funktion
+    async function checkAudioDeviceChange(isInitialCall = false) {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-                addLogEntry("BT/AUDIO-FEHLER: MediaDevices API nicht unterstützt.", 'error');
-                return false;
+                if (isInitialCall) addLogEntry("BT/AUDIO-FEHLER: MediaDevices API nicht unterstützt.", 'error');
+                return false; // Nichts zu tun
             }
+
+            // Beim allerersten Aufruf (Phase A) fragen wir nach Mikrofon, um Labels zu erhalten
             if (isInitialCall) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -146,6 +150,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     return false;
                 }
             }
+
             const devices = await navigator.mediaDevices.enumerateDevices();
             let audioOutputs = [];
             devices.forEach(device => {
@@ -153,11 +158,23 @@ document.addEventListener("DOMContentLoaded", () => {
                     audioOutputs.push(device.label || 'Unbenanntes Gerät');
                 }
             });
-            const logString = `BT/AUDIO-STATUS: ${audioOutputs.length} Audio-Ausgänge | Namen: [${audioOutputs.join(', ')}]`;
-            if (isInitialCall) {
-                addLogEntry("DEBUG: Audio-Check (initial) erfolgreich.", 'info');
-            } else {
-                addLogEntry(logString, 'info');
+            
+            const numDevices = audioOutputs.length;
+            const currentDeviceNames = audioOutputs.join(', '); // z.B. "Standard, VW-Radio"
+
+            // Das ist die "intelligente" v9-Logik:
+            // Logge NUR, wenn sich der Status ändert ODER es der allererste Aufruf ist.
+            if (currentDeviceNames !== lastAudioDeviceNames) {
+                const logString = `BT/AUDIO-STATUS: ${numDevices} Audio-Ausgänge | Namen: [${currentDeviceNames}]`;
+                
+                if (isInitialCall) {
+                    addLogEntry("DEBUG: Audio-Check (initial) erfolgreich.", 'info');
+                } else {
+                    addLogEntry('BT/AUDIO-EVENT: Geräte-Änderung erkannt (Polling)!', 'warn');
+                    addLogEntry(logString, 'warn'); // Als Warnung loggen, weil es wichtig ist
+                }
+                
+                lastAudioDeviceNames = currentDeviceNames; // Zustand speichern
             }
             return true;
         } catch (err) {
@@ -166,13 +183,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 5. Bewegungssensor (Mit v8 Auto-Dump)
+    // 5. Bewegungssensor
     function logDeviceMotion(event) {
+        // (identisch zu v8)
         const now = Date.now();
         const acc = event.accelerationIncludingGravity;
 
         if (!motionSensorHasFired) {
-            // ... (identisch zu v7)
             motionSensorHasFired = true;
             if (!acc || acc.x === null) {
                 addLogEntry("DEBUG: 'devicemotion' feuert, ABER DATEN SIND NULL.", 'warn');
@@ -183,23 +200,20 @@ document.addEventListener("DOMContentLoaded", () => {
         
         if (!acc || acc.x === null) return; 
 
-        // 5a. Daten für den Flugschreiber
         const dataString = `X: ${acc.x.toFixed(2)} | Y: ${acc.y.toFixed(2)} | Z: ${acc.z.toFixed(2)}`;
         pushToFlightRecorder(now, 'MOTION', dataString);
 
-        // 5b. v8 Jolt Detection (mit Auto-Dump)
         const gForce = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
         if (gForce > JOLT_THRESHOLD_MS2 && (now - lastJoltTime > JOLT_COOLDOWN_MS)) {
             lastJoltTime = now;
             const reason = `HARTER STOSS ERKANNT (G-Force: ${gForce.toFixed(1)})`;
-            // AUTOMATISCHER DUMP
             dumpFlightRecorder(getTimestamp(), reason);
         }
     }
 
     // 6. Orientierungssensor
     function logDeviceOrientation(event) {
-        // ... (identisch zu v7)
+        // (identisch zu v8)
         const now = Date.now();
         if (!orientationSensorHasFired) {
             orientationSensorHasFired = true;
@@ -214,17 +228,17 @@ document.addEventListener("DOMContentLoaded", () => {
         pushToFlightRecorder(now, 'ORIENTATION', dataString);
     }
 
-
     // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v8) ---
+    // --- STEUERUNGS-FUNKTIONEN (v9) ---
     // ===================================
 
     // Phase A: Pre-Flight Check
     async function requestAllPermissions() {
-        // ... (identisch zu v7)
+        // ... (Hauptsächlich identisch zu v8)
         addLogEntry("Phase A: Fordere Berechtigungen an...");
         statusEl.textContent = "Berechtigungen anfordern...";
         
+        // 1. GPS
         try {
             if (!navigator.geolocation) throw new Error("Geolocation wird nicht unterstützt.");
             await new Promise((resolve, reject) => {
@@ -236,12 +250,15 @@ document.addEventListener("DOMContentLoaded", () => {
             addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error');
         }
 
-        permissionsState.audio = await updateDeviceList(true);
+        // 2. v9: Audio-Check
+        permissionsState.audio = await checkAudioDeviceChange(true); // 'true' = erster Aufruf
         if (permissionsState.audio) {
             addLogEntry("DEBUG: BERECHTIGUNG: Audio (für Geräteliste) erteilt.");
         }
 
+        // 3. Bewegung
         if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
+            // (identisch zu v8)
             addLogEntry("DEBUG: 'requestPermission' Motion-API erkannt, fordere an...");
             try {
                 const state = await DeviceMotionEvent.requestPermission();
@@ -255,8 +272,10 @@ document.addEventListener("DOMContentLoaded", () => {
             addLogEntry("DEBUG: BERECHTIGUNG: Bewegungssensor (Android/implizit) OK.");
         }
 
+        // 4. Orientierung
         if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
-            addLogEntry("DEBUG: 'requestPermission' Orientation-API erkannt, fordere an...");
+            // (identisch zu v8)
+             addLogEntry("DEBUG: 'requestPermission' Orientation-API erkannt, fordere an...");
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
                 permissionsState.orientation = (state === 'granted');
@@ -275,25 +294,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Phase B: Startet alle Logger
     function startAllLoggers() {
-        // ... (identisch zu v7)
         addLogEntry("Phase B: Starte alle Logger...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
 
+        // 1. GPS-Logger
         const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
         geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
         addLogEntry("DEBUG: 'geolocation.watchPosition' Listener angehängt.");
         
-        if (permissionsState.audio && navigator.mediaDevices) {
-            navigator.mediaDevices.ondevicechange = logDeviceChange;
-            addLogEntry("DEBUG: 'mediaDevices.ondevicechange' Listener angehängt.");
-            updateDeviceList(false);
+        // 2. v9: BT/Audio-POLLING-Timer
+        if (permissionsState.audio) {
+            // Starte den 5-Sekunden-Timer
+            audioCheckInterval = setInterval(checkAudioDeviceChange, AUDIO_POLL_INTERVAL_MS);
+            addLogEntry(`DEBUG: BT/Audio-Polling-Timer gestartet (Intervall: ${AUDIO_POLL_INTERVAL_MS}ms).`);
+            checkAudioDeviceChange(false); // Logge den aktuellen Status beim Start
         }
 
+        // 3. Bewegungs-Sensor-Logger
         if (permissionsState.motion) {
             window.addEventListener('devicemotion', logDeviceMotion);
             addLogEntry("DEBUG: 'devicemotion' Listener angehängt.");
         }
         
+        // 4. Orientierungs-Sensor-Logger
         if (permissionsState.orientation) {
             window.addEventListener('deviceorientation', logDeviceOrientation);
             addLogEntry("DEBUG: 'deviceorientation' Listener angehängt.");
@@ -308,17 +331,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (v8) ---
+    // --- BUTTON-HANDLER (v9) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
     permissionBtn.onclick = async () => {
-        // ... (identisch zu v7)
         permissionBtn.disabled = true;
         statusEl.textContent = "Prüfe Berechtigungen...";
         logEntries = [];
         flightRecorderBuffer = [];
         logAreaEl.value = "";
+        lastAudioDeviceNames = ""; // v9: Status zurücksetzen
         
         const gpsOk = await requestAllPermissions();
 
@@ -334,29 +357,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // START
     startBtn.onclick = () => {
-        // ... (identisch zu v7)
         logEntries = [];
         flightRecorderBuffer = [];
         logAreaEl.value = "";
         motionSensorHasFired = false;
         orientationSensorHasFired = false; 
+        lastAudioDeviceNames = ""; // v9: Status zurücksetzen
         
-        addLogEntry("Logging-Prozess angefordert (v8)...");
+        addLogEntry("Logging-Prozess angefordert (v9)...");
         startAllLoggers();
     };
 
     // STOP
     stopBtn.onclick = () => {
-        // ... (identisch zu v7)
         if (!isLogging) return;
         
+        // Alle Listener und Timer stoppen
         if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
-        if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = null;
+        if (audioCheckInterval) clearInterval(audioCheckInterval); // v9: Polling-Timer stoppen
+        
         window.removeEventListener('devicemotion', logDeviceMotion);
         window.removeEventListener('deviceorientation', logDeviceOrientation);
         
         isLogging = false;
         geoWatchId = null;
+        audioCheckInterval = null;
         flightRecorderBuffer = [];
         addLogEntry("Logging gestoppt.");
 
@@ -368,28 +393,26 @@ document.addEventListener("DOMContentLoaded", () => {
         downloadBtn.disabled = false; 
     };
 
-    // ABSTURZ MARKIEREN (v8)
+    // ABSTURZ MARKIEREN
     crashBtn.onclick = () => {
         if (!isLogging) return;
         
         const markerTime = getTimestamp();
-        // Nutze die neue, ausgelagerte Funktion
         dumpFlightRecorder(markerTime, "ABSTURZ VOM NUTZER MARKIERT");
         
         statusEl.textContent = "ABSTURZ MARKIERT & DUMP ERSTELLT!";
         setTimeout(() => { if(isLogging) statusEl.textContent = "LOGGING..."; }, 3000);
     };
 
-    // DOWNLOAD (v8)
+    // DOWNLOAD
     downloadBtn.onclick = () => {
-        // ... (identisch zu v7)
         if (logEntries.length === 0) {
             alert("Keine Logs zum Herunterladen vorhanden.");
             return;
         }
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain' });
-        const filename = `waze_log_v8_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v9_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
