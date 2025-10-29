@@ -1,21 +1,18 @@
 /*
- * SYSTEM-DEBUGGER v1
+ * SYSTEM-DEBUGGER v2
  * ==================
- * Dein "Sicherungskasten".
- * Diese Datei MUSS als ERSTES in der index.html geladen werden.
  *
- * 1. Fängt globale JavaScript-Fehler (von app.js etc.)
- * 2. Prüft das System (HTTPS, APIs) auf "Herz und Nieren".
+ * OPTIMIERUNG:
+ * 1. Log-Texte aufgeräumt. "iOS-spezifisch" wurde
+ * in "requestPermission API" umbenannt, basierend auf
+ * unserer Entdeckung aus dem v7-Log.
  */
 "use strict";
 
 (function() {
-    // Ein Puffer, falls das DOM noch nicht bereit ist
     let debugMessages = [];
 
     // --- 1. Der globale Fehler-Fänger ---
-    // Dieser Haken fängt JEDEN Fehler, der nach ihm auftritt
-    // (z.B. Syntaxfehler in app.js)
     window.onerror = function(message, source, lineno, colno, error) {
         const errorMsg = `
 --- !!! GLOBALER FEHLER GEFANGEN !!! ---
@@ -25,16 +22,15 @@ ZEILE: ${lineno}, SPALTE: ${colno}
 DETAILS: ${error ? error.stack : 'Nicht verfügbar'}
 --- ENDE FEHLER ---
 `;
-        console.error(errorMsg); // Auch in der echten Konsole loggen
+        console.error(errorMsg);
         logDebug(errorMsg);
-        return true; // Verhindert, dass der Browser-Standard-Fehlerdialog kommt
+        return true; 
     };
 
     // --- 2. Der System-Check ("Herz und Nieren") ---
     function runSystemCheck() {
-        logDebug("--- SYSTEM-CHECK (Herz und Nieren) ---");
+        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v2 ---");
         
-        // Check 1: HTTPS (Kritisch für alle APIs)
         if (window.location.protocol !== 'https:'){
             logDebug("KRITISCHER FEHLER: Seite ist NICHT über HTTPS geladen!");
             logDebug("     -> APIs (GPS, Sensoren) werden FEHLSCHLAGEN.");
@@ -42,21 +38,20 @@ DETAILS: ${error ? error.stack : 'Nicht verfügbar'}
             logDebug("SYSTEM-CHECK: HTTPS ... OK");
         }
 
-        // Check 2: Browser
         logDebug(`SYSTEM-CHECK: User Agent ... ${navigator.userAgent}`);
 
-        // Check 3: API-Verfügbarkeit
+        // API-Verfügbarkeit
         checkApi('Geolocation', navigator.geolocation);
         checkApi('MediaDevices (Audio/BT)', navigator.mediaDevices);
         checkApi('DeviceMotionEvent (Bewegung)', window.DeviceMotionEvent);
         checkApi('DeviceOrientationEvent (Ausrichtung)', window.DeviceOrientationEvent);
 
-        // Check 4: iOS-spezifische API-Checks
+        // V8-OPTIMIERUNG: Log-Text korrigiert
         if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function') {
-            logDebug("SYSTEM-CHECK: iOS-spezifische Motion-API ... GEFUNDEN");
+            logDebug("SYSTEM-CHECK: 'requestPermission' Motion-API ... GEFUNDEN (Erweiterte Sicherheit)");
         }
         if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-            logDebug("SYSTEM-CHECK: iOS-spezifische Orientation-API ... GEFUNDEN");
+            logDebug("SYSTEM-CHECK: 'requestPermission' Orientation-API ... GEFUNDEN (Erweiterte Sicherheit)");
         }
         
         logDebug("--- SYSTEM-CHECK BEENDET ---");
@@ -79,7 +74,7 @@ DETAILS: ${error ? error.stack : 'Nicht verfügbar'}
         if (outputEl) {
             outputEl.textContent += logLine + '\n';
         } else {
-            debugMessages.push(logLine); // Speichern für später
+            debugMessages.push(logLine);
         }
     }
 
@@ -88,27 +83,22 @@ DETAILS: ${error ? error.stack : 'Nicht verfügbar'}
         const outputEl = document.getElementById('debug-output');
         const copyBtn = document.getElementById('copyDebugBtn');
 
-        // Initialisiere das Debug-Fenster
-        outputEl.textContent = "Debugger v1 initialisiert...\n";
+        outputEl.textContent = "Debugger v2 initialisiert...\n";
         
-        // Schreibe gepufferte Nachrichten (falls vorhanden)
         if (debugMessages.length > 0) {
             outputEl.textContent += debugMessages.join('\n') + '\n';
-            debugMessages = []; // Puffer leeren
+            debugMessages = [];
         }
 
-        // Führe den System-Check aus
         try {
             runSystemCheck();
         } catch (e) {
             logDebug(`FEHLER WÄHREND SYSTEM-CHECK: ${e.message}`, 'error');
         }
 
-        // Programmiere den Kopier-Button
         if (copyBtn) {
             copyBtn.onclick = () => {
                 try {
-                    // Verwende die execCommand-Methode für maximale Kompatibilität in iFrames
                     const tempText = document.createElement("textarea");
                     document.body.appendChild(tempText);
                     tempText.value = outputEl.textContent;
@@ -126,5 +116,4 @@ DETAILS: ${error ? error.stack : 'Nicht verfügbar'}
         }
     });
 
-})(); // Selbstausführende Funktion, um den globalen Scope sauber zu halten
-
+})();
