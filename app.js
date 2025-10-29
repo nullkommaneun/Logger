@@ -1,21 +1,21 @@
 /*
- * Waze Korrelations-Logger - v9 "BT-Polling-Hack"
+ * Waze Korrelations-Logger - v10 "Netzwerk-Spion"
  * ==================================================
  *
- * FEHLERBEHEBUNG (aus Log v8):
- * 1. Der 'ondevicechange'-Listener ist unzuverlässig und
- * hat die Verbindung zum Auto (Wireless AA) nicht erkannt.
+ * FEHLERBEHEBUNG (aus Log v9):
+ * 1. Das BT/Audio-Polling (v9) war ein FEHLSCHLAG. Der
+ * Browser lügt im Hintergrund über die Geräteliste.
  *
- * OPTIMIERUNG (v9):
- * 1. Der 'ondevicechange'-Listener wird ENTFERNT.
- * 2. Er wird durch einen "Polling"-Timer (setInterval) ersetzt.
- * 3. Alle 5 Sekunden prüft die App jetzt AKTIV die BT/Audio-
- * Geräteliste.
- * 4. Eine neue "stateful" Funktion loggt NUR, wenn sich
- * die Geräteliste TATSÄCHLICH ändert.
+ * OPTIMIERUNG (v10):
+ * 1. Das BT/Audio-Polling wird ENTFERNT.
+ * 2. Es wird durch einen Polling-Timer für die
+ * "NetworkInformation" API (`navigator.connection.type`)
+ * ersetzt.
+ * 3. Wir suchen jetzt nach Änderungen im Netzwerktyp
+ * (z.B. von 'cellular' zu 'wifi'), um den
+ * Wireless-AA-Handshake zu erkennen.
  *
- * Das "Schwarze Loch v2" (fehlendes BT-Event) wird hiermit
- * geschlossen.
+ * Das ist unser neuer "Rauchender Colt".
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -36,12 +36,12 @@ document.addEventListener("DOMContentLoaded", () => {
     let isLogging = false;
     let logEntries = [];
     let geoWatchId = null;
-    let permissionsState = { gps: false, audio: false, motion: false, orientation: false };
+    let permissionsState = { gps: false, motion: false, orientation: false, network: false };
 
-    // --- v9: BT-Polling-Status ---
-    let audioCheckInterval = null;
-    let lastAudioDeviceNames = ""; // Unser neuer "Speicher"
-    const AUDIO_POLL_INTERVAL_MS = 5000; // Alle 5 Sekunden
+    // --- v10: Netzwerk-Polling-Status ---
+    let networkCheckInterval = null;
+    let lastNetworkType = ""; // Unser neuer "Speicher"
+    const NETWORK_POLL_INTERVAL_MS = 3000; // Alle 3 Sekunden
 
     // --- v6: DEBUG Heartbeat Flags ---
     let motionSensorHasFired = false;
@@ -102,16 +102,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- SENSOR-HANDLER (Überarbeitet v9) ---
+    // --- SENSOR-HANDLER (Überarbeitet v10) ---
     // ===================================
 
     // 1. GPS-Erfolg
     function logPosition(position) {
-        // (identisch zu v8)
+        // v10: Wir loggen 'isOnline' nicht mehr hier, da der Netzwerk-Logger das jetzt besser macht.
         const coords = position.coords;
-        const isOnline = navigator.onLine;
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
-        const logData = [ `GPS-OK | Acc: ${coords.accuracy.toFixed(1)}m`, `Speed: ${speedKmh} km/h`, `Online: ${isOnline}` ];
+        const logData = [ `GPS-OK | Acc: ${coords.accuracy.toFixed(1)}m`, `Speed: ${speedKmh} km/h` ];
         addLogEntry(logData.join(' | '));
         statusEl.textContent = `LOGGING... (GPS: ${coords.accuracy.toFixed(1)}m)`;
     }
@@ -130,58 +129,38 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Fehler: GPS-Problem!";
     }
 
-    // 3. (GELÖSCHT) logDeviceChange() - War unzuverlässig.
+    // 3. (GELÖSCHT) Audio-Polling (v9)
 
-    // 4. v9: Intelligente Audio-Polling-Funktion
-    async function checkAudioDeviceChange(isInitialCall = false) {
+    // 4. v10: Intelligente Netzwerk-Polling-Funktion
+    function checkNetworkState(isInitialCall = false) {
+        if (!permissionsState.network) return; // API nicht verfügbar
+
         try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-                if (isInitialCall) addLogEntry("BT/AUDIO-FEHLER: MediaDevices API nicht unterstützt.", 'error');
-                return false; // Nichts zu tun
-            }
+            const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            const isOnline = navigator.onLine;
+            const currentType = connection ? connection.type : 'unknown'; // z.B. 'cellular', 'wifi'
 
-            // Beim allerersten Aufruf (Phase A) fragen wir nach Mikrofon, um Labels zu erhalten
-            if (isInitialCall) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(track => track.stop());
-                } catch (permErr) {
-                    addLogEntry("BT/AUDIO-INFO: Mikrofon-Zugriff verweigert, Gerätelabels könnten fehlen.", 'warn');
-                    return false;
-                }
-            }
+            const logString = `NETZWERK-STATUS: Online: ${isOnline} | Typ: ${currentType}`;
 
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            let audioOutputs = [];
-            devices.forEach(device => {
-                if (device.kind === 'audiooutput') {
-                    audioOutputs.push(device.label || 'Unbenanntes Gerät');
-                }
-            });
-            
-            const numDevices = audioOutputs.length;
-            const currentDeviceNames = audioOutputs.join(', '); // z.B. "Standard, VW-Radio"
-
-            // Das ist die "intelligente" v9-Logik:
-            // Logge NUR, wenn sich der Status ändert ODER es der allererste Aufruf ist.
-            if (currentDeviceNames !== lastAudioDeviceNames) {
-                const logString = `BT/AUDIO-STATUS: ${numDevices} Audio-Ausgänge | Namen: [${currentDeviceNames}]`;
-                
+            // Das ist die "intelligente" v10-Logik:
+            // Logge NUR, wenn sich der Typ ändert ODER es der allererste Aufruf ist.
+            if (currentType !== lastNetworkType || isInitialCall) {
                 if (isInitialCall) {
-                    addLogEntry("DEBUG: Audio-Check (initial) erfolgreich.", 'info');
+                    addLogEntry(logString, 'info'); // Nur als Info beim Start
                 } else {
-                    addLogEntry('BT/AUDIO-EVENT: Geräte-Änderung erkannt (Polling)!', 'warn');
-                    addLogEntry(logString, 'warn'); // Als Warnung loggen, weil es wichtig ist
+                    addLogEntry('NETZWERK-EVENT: Verbindungstyp geändert!', 'warn');
+                    addLogEntry(logString, 'warn');
                 }
-                
-                lastAudioDeviceNames = currentDeviceNames; // Zustand speichern
+                lastNetworkType = currentType; // Zustand speichern
             }
-            return true;
         } catch (err) {
-            addLogEntry(`BT/AUDIO-FEHLER: ${err.message}`, 'error');
-            return false;
+            addLogEntry(`NETZWERK-FEHLER: ${err.message}`, 'error');
+            // Deaktivieren, um Fehler-Spam zu verhindern
+            permissionsState.network = false; 
+            if (networkCheckInterval) clearInterval(networkCheckInterval);
         }
     }
+
 
     // 5. Bewegungssensor
     function logDeviceMotion(event) {
@@ -220,7 +199,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (event.alpha === null) {
                 addLogEntry("DEBUG: 'deviceorientation' feuert, ABER DATEN SIND NULL.", 'warn');
             } else {
-                addLogEntry("DEBUG: 'deviceorientation' feuert erfolgreich mit Daten.", 'info');
+                addLogE`[${timestamp}] ${message}`ntry("DEBUG: 'deviceorientation' feuert erfolgreich mit Daten.", 'info');
             }
         }
         if (event.alpha === null) return;
@@ -229,12 +208,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v9) ---
+    // --- STEUERUNGS-FUNKTIONEN (v10) ---
     // ===================================
 
     // Phase A: Pre-Flight Check
     async function requestAllPermissions() {
-        // ... (Hauptsächlich identisch zu v8)
         addLogEntry("Phase A: Fordere Berechtigungen an...");
         statusEl.textContent = "Berechtigungen anfordern...";
         
@@ -250,15 +228,16 @@ document.addEventListener("DOMContentLoaded", () => {
             addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error');
         }
 
-        // 2. v9: Audio-Check
-        permissionsState.audio = await checkAudioDeviceChange(true); // 'true' = erster Aufruf
-        if (permissionsState.audio) {
-            addLogEntry("DEBUG: BERECHTIGUNG: Audio (für Geräteliste) erteilt.");
+        // 2. v10: Netzwerk-API-Check
+        if ('connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator) {
+            permissionsState.network = true;
+            addLogEntry("DEBUG: BERECHTIGUNG: Netzwerk-API (`navigator.connection`) gefunden.");
+        } else {
+            addLogEntry("BERECHTIGUNG: Netzwerk-API wird nicht unterstützt!", 'warn');
         }
 
-        // 3. Bewegung
+        // 3. Bewegung (iOS / Modernes Android)
         if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
-            // (identisch zu v8)
             addLogEntry("DEBUG: 'requestPermission' Motion-API erkannt, fordere an...");
             try {
                 const state = await DeviceMotionEvent.requestPermission();
@@ -268,13 +247,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 addLogEntry(`DEBUG: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error');
             }
         } else {
-            permissionsState.motion = true;
+            permissionsState.motion = true; // Android
             addLogEntry("DEBUG: BERECHTIGUNG: Bewegungssensor (Android/implizit) OK.");
         }
 
-        // 4. Orientierung
+        // 4. Orientierung (iOS / Modernes Android)
         if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
-            // (identisch zu v8)
              addLogEntry("DEBUG: 'requestPermission' Orientation-API erkannt, fordere an...");
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
@@ -284,7 +262,7 @@ document.addEventListener("DOMContentLoaded", () => {
                  addLogEntry(`DEBUG: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error');
             }
         } else {
-            permissionsState.orientation = true;
+            permissionsState.orientation = true; // Android
             addLogEntry("DEBUG: BERECHTIGUNG: Orientierungssensor (Android/implizit) OK.");
         }
         
@@ -302,12 +280,11 @@ document.addEventListener("DOMContentLoaded", () => {
         geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
         addLogEntry("DEBUG: 'geolocation.watchPosition' Listener angehängt.");
         
-        // 2. v9: BT/Audio-POLLING-Timer
-        if (permissionsState.audio) {
-            // Starte den 5-Sekunden-Timer
-            audioCheckInterval = setInterval(checkAudioDeviceChange, AUDIO_POLL_INTERVAL_MS);
-            addLogEntry(`DEBUG: BT/Audio-Polling-Timer gestartet (Intervall: ${AUDIO_POLL_INTERVAL_MS}ms).`);
-            checkAudioDeviceChange(false); // Logge den aktuellen Status beim Start
+        // 2. v10: Netzwerk-POLLING-Timer
+        if (permissionsState.network) {
+            networkCheckInterval = setInterval(checkNetworkState, NETWORK_POLL_INTERVAL_MS);
+            addLogEntry(`DEBUG: Netzwerk-Polling-Timer gestartet (Intervall: ${NETWORK_POLL_INTERVAL_MS}ms).`);
+            checkNetworkState(true); // Logge den initialen Status
         }
 
         // 3. Bewegungs-Sensor-Logger
@@ -331,7 +308,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (v9) ---
+    // --- BUTTON-HANDLER (v10) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
@@ -341,7 +318,7 @@ document.addEventListener("DOMContentLoaded", () => {
         logEntries = [];
         flightRecorderBuffer = [];
         logAreaEl.value = "";
-        lastAudioDeviceNames = ""; // v9: Status zurücksetzen
+        lastNetworkType = ""; // v10: Status zurücksetzen
         
         const gpsOk = await requestAllPermissions();
 
@@ -362,9 +339,9 @@ document.addEventListener("DOMContentLoaded", () => {
         logAreaEl.value = "";
         motionSensorHasFired = false;
         orientationSensorHasFired = false; 
-        lastAudioDeviceNames = ""; // v9: Status zurücksetzen
+        lastNetworkType = ""; // v10: Status zurücksetzen
         
-        addLogEntry("Logging-Prozess angefordert (v9)...");
+        addLogEntry(`Logging-Prozess angefordert (v10)...`);
         startAllLoggers();
     };
 
@@ -374,14 +351,14 @@ document.addEventListener("DOMContentLoaded", () => {
         
         // Alle Listener und Timer stoppen
         if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
-        if (audioCheckInterval) clearInterval(audioCheckInterval); // v9: Polling-Timer stoppen
+        if (networkCheckInterval) clearInterval(networkCheckInterval); // v10: Polling-Timer stoppen
         
         window.removeEventListener('devicemotion', logDeviceMotion);
         window.removeEventListener('deviceorientation', logDeviceOrientation);
         
         isLogging = false;
         geoWatchId = null;
-        audioCheckInterval = null;
+        networkCheckInterval = null;
         flightRecorderBuffer = [];
         addLogEntry("Logging gestoppt.");
 
@@ -412,7 +389,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain' });
-        const filename = `waze_log_v9_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v10_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
