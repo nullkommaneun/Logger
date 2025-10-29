@@ -1,133 +1,122 @@
-/* Das ist die "Style"-Schicht - v7 (mit Debug-Fenster) */
-:root {
-    --bg-color: #1c1c1e;
-    --text-color: #f0f0f0;
-    --log-bg: #2c2c2e;
-    --debug-bg: #000; /* Debug-Fenster ist dunkel */
-    --debug-text: #00ff00; /* Klassische "Hacker"-Farbe */
-    --green: #34c759;
-    --red: #ff3b30;
-    --orange: #ff9500;
-    --blue: #007aff;
-    --grey: #8e8e93;
-}
+/* Waze Korrelations-Logger Stile - v12 */
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background-color: var(--bg-color);
-    color: var(--text-color);
-    padding: 20px;
-    margin: 0;
-    overscroll-behavior: none;
-}
-
-/* --- NEUER DEBUG-BEREICH --- */
-#debug-container {
-    background-color: var(--log-bg);
-    border: 1px solid var(--orange); /* Hebt sich ab */
-    border-radius: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
     padding: 15px;
-    margin-bottom: 20px;
+    background-color: #1e1e1e; /* Dark Mode */
+    color: #e0e0e0;
+    margin: 0;
+    overscroll-behavior-y: contain; /* Verhindert "Pull-to-refresh" */
 }
 
-#debug-container h3 {
-    margin-top: 0;
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+}
+
+h1 {
+    color: #bb86fc; /* Lila Akzent */
     text-align: center;
-    color: var(--orange);
+    margin-bottom: 5px;
 }
 
-#debug-output {
-    background-color: var(--debug-bg);
-    color: var(--debug-text);
-    font-family: "Courier New", Courier, monospace;
-    font-size: 0.9em;
-    height: 200px;
-    overflow-y: scroll;
-    padding: 10px;
-    border-radius: 5px;
-    white-space: pre-wrap; /* Zeilenumbrüche */
-    word-break: break-all;
-}
-
-#copyDebugBtn {
-    width: 100%;
-    padding: 10px;
-    font-size: 1em;
-    font-weight: bold;
-    border: none;
-    border-radius: 5px;
+.subtitle {
+    text-align: center;
+    margin-top: 0;
     margin-bottom: 15px;
-    cursor: pointer;
-    background-color: var(--grey);
-    color: white;
-}
-/* --- ENDE DEBUG-BEREICH --- */
-
-
-/* --- APP-BEREICH --- */
-#app-container {
-    border-top: 2px solid var(--blue);
-    padding-top: 15px;
+    color: #a0a0a0;
 }
 
-h2 {
-    text-align: center;
-    margin-top: 0;
-}
-
-p {
-    text-align: center;
+/* v12: Flag Warning Box */
+.flag-warning {
+    background-color: #444;
+    border: 1px solid #ffcc00; /* Gelber Rand */
+    color: #ffcc00;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 5px;
     font-size: 0.9em;
-    color: var(--grey);
 }
+.flag-warning code {
+    background-color: #555;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
 
 #status {
-    font-size: 1.2em;
     font-weight: bold;
+    font-size: 1.1em;
+    margin-bottom: 15px;
+    padding: 10px;
+    background-color: #333;
+    border-radius: 5px;
     text-align: center;
-    padding: 15px;
-    background-color: var(--log-bg);
-    border-radius: 10px;
-    margin-bottom: 20px;
-    min-height: 1.2em;
+}
+
+.button-group {
+    display: grid;
+    grid-template-columns: 1fr; /* Alle Buttons untereinander */
+    gap: 10px; /* Abstand zwischen Buttons */
+    margin-bottom: 15px;
 }
 
 button {
-    width: 100%;
-    padding: 20px;
-    font-size: 1.3em;
-    font-weight: bold;
+    padding: 15px;
+    font-size: 1.1em;
     border: none;
-    border-radius: 10px;
-    margin-top: 15px;
+    border-radius: 5px;
     cursor: pointer;
-    transition: opacity 0.2s;
+    transition: background-color 0.2s ease;
+    color: #ffffff;
 }
 
 button:disabled {
-    opacity: 0.4;
+    background-color: #555 !important;
+    color: #999;
     cursor: not-allowed;
 }
 
-#permissionBtn { background-color: var(--blue); color: white; }
-#startBtn { background-color: var(--green); color: white; }
-#stopBtn { background-color: var(--red); color: white; }
-#crashBtn { background-color: var(--orange); color: white; }
-#downloadBtn { background-color: var(--grey); color: white; }
+#permissionBtn { background-color: #03a9f4; /* Hellblau */ } /* Blau für Check */
+#startBtn { background-color: #4CAF50; } /* Grün für Start */
+#stopBtn { background-color: #f44336; } /* Rot für Stop */
+#crashBtn { background-color: #ff9800; color: #1e1e1e; font-weight: bold;} /* Orange für Warnung */
+#downloadBtn { background-color: #607d8b; } /* Grau-Blau für Download */
+
+#permissionBtn:hover:not(:disabled) { background-color: #29b6f6; }
+#startBtn:hover:not(:disabled) { background-color: #66bb6a; }
+#stopBtn:hover:not(:disabled) { background-color: #ef5350; }
+#crashBtn:hover:not(:disabled) { background-color: #ffa726; }
+#downloadBtn:hover:not(:disabled) { background-color: #78909c; }
 
 
-#logArea {
-    width: calc(100% - 20px);
-    height: 300px;
-    background-color: var(--log-bg);
-    color: var(--text-color);
-    border: 1px solid var(--grey);
-    border-radius: 10px;
-    margin-top: 20px;
-    padding: 10px;
-    font-family: "Courier New", Courier, monospace;
-    font-size: 0.9em;
-    resize: vertical;
+label {
+    margin-top: 15px;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #b0b0b0;
 }
 
+textarea {
+    width: calc(100% - 20px); /* Berücksichtigt Padding */
+    height: 250px;
+    margin-bottom: 15px;
+    background-color: #2c2c2c;
+    color: #d0d0d0;
+    border: 1px solid #444;
+    border-radius: 5px;
+    padding: 10px;
+    font-family: monospace;
+    font-size: 0.9em;
+    resize: vertical; /* Nur vertikal vergrößerbar */
+}
 
+/* Speziell für Debugger */
+#debugArea {
+    height: 150px; /* Etwas kleiner */
+    color: #ffcc00; /* Gelbliche Schrift für Debug-Infos */
+    font-size: 0.8em;
+} 
