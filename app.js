@@ -1,13 +1,14 @@
 /*
- * Waze Korrelations-Logger - v6 "Meta-Logging"
+ * Waze Korrelations-Logger - v7 (KORRIGIERT)
  * ================================================
- * NEU:
- * 1. "Meta-Logging" (Debug-Sonden) in Phase A (Permissions)
- * und Phase B (Start) hinzugefügt.
- * 2. "First-Fire-Heartbeat": Die Sensor-Handler loggen ihren
- * Status (Daten vs. Null) beim allerersten Event.
  *
- * Wir jagen das "Schwarze Loch" aus Log v5.
+ * FEHLERBEHEBUNG:
+ * 1. Der versehentlich einkopierte "Plugin-Ausführung..."-Fehler
+ * aus v6 wurde in `startAllLoggers` entfernt.
+ *
+ * Alle anderen Funktionen (v5/v6 Meta-Logging) sind intakt.
+ * Dieser Code sollte jetzt vom neuen `debugger.js` überwacht werden.
+ *
  * Gebaut von deinem Sparingpartner.
  */
 "use strict";
@@ -74,7 +75,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- SENSOR-HANDLER (Überarbeitet v6) ---
     // ===================================
 
-    // 1. GPS-Erfolg (Loggt weiter ins Haupt-Log)
+    // 1. GPS-Erfolg
     function logPosition(position) {
         const coords = position.coords;
         const isOnline = navigator.onLine;
@@ -84,7 +85,7 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = `LOGGING... (GPS: ${coords.accuracy.toFixed(1)}m)`;
     }
 
-    // 2. GPS-Fehler (Loggt weiter ins Haupt-Log)
+    // 2. GPS-Fehler
     function logError(error) {
         let message = '';
         switch(error.code) {
@@ -97,15 +98,14 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Fehler: GPS-Problem!";
     }
 
-    // 3. Audio/Bluetooth-Geräte-Änderung (Loggt weiter ins Haupt-Log)
+    // 3. Audio/Bluetooth-Geräte-Änderung
     function logDeviceChange() {
         addLogEntry('BT/AUDIO-EVENT: Geräte-Änderung erkannt!', 'warn');
-        updateDeviceList(false); // 'false' = nicht der erste Aufruf
+        updateDeviceList(false);
     }
 
-    // 4. Geräteliste auslesen (Loggt weiter ins Haupt-Log)
+    // 4. Geräteliste auslesen
     async function updateDeviceList(isInitialCall = false) {
-        // ... (Funktion ist identisch zu v5)
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
                 addLogEntry("BT/AUDIO-FEHLER: MediaDevices API nicht unterstützt.", 'error');
@@ -140,12 +140,11 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 5. Bewegungssensor (Mit v6-Heartbeat)
+    // 5. Bewegungssensor
     function logDeviceMotion(event) {
         const now = Date.now();
         const acc = event.accelerationIncludingGravity;
 
-        // --- v6: DEBUG-Heartbeat (feuert nur beim ersten Mal) ---
         if (!motionSensorHasFired) {
             motionSensorHasFired = true;
             if (!acc || acc.x === null) {
@@ -154,15 +153,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 addLogEntry("DEBUG: 'devicemotion' feuert erfolgreich mit Daten.", 'info');
             }
         }
-        // --- Ende v6-Debug ---
-
-        if (!acc || acc.x === null) return; // Wichtiger Guard
-
-        // 5a. Daten für den Flugschreiber
+        if (!acc || acc.x === null) return; 
         const dataString = `X: ${acc.x.toFixed(2)} | Y: ${acc.y.toFixed(2)} | Z: ${acc.z.toFixed(2)}`;
         pushToFlightRecorder(now, 'MOTION', dataString);
-
-        // 5b. Jolt Detection
         const gForce = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
         if (gForce > JOLT_THRESHOLD_MS2 && (now - lastJoltTime > JOLT_COOLDOWN_MS)) {
             lastJoltTime = now;
@@ -170,11 +163,9 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 6. Orientierungssensor (Mit v6-Heartbeat)
+    // 6. Orientierungssensor
     function logDeviceOrientation(event) {
         const now = Date.now();
-
-        // --- v6: DEBUG-Heartbeat (feuert nur beim ersten Mal) ---
         if (!orientationSensorHasFired) {
             orientationSensorHasFired = true;
             if (event.alpha === null) {
@@ -183,23 +174,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 addLogEntry("DEBUG: 'deviceorientation' feuert erfolgreich mit Daten.", 'info');
             }
         }
-        // --- Ende v6-Debug ---
-
-        if (event.alpha === null) return; // Wichtiger Guard
-
-        // 6a. Daten für den Flugschreiber
+        if (event.alpha === null) return;
         const dataString = `Alpha(Z): ${event.alpha.toFixed(1)} | Beta(X): ${event.beta.toFixed(1)} | Gamma(Y): ${event.gamma.toFixed(1)}`;
         pushToFlightRecorder(now, 'ORIENTATION', dataString);
     }
 
 
     // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v6) ---
+    // --- STEUERUNGS-FUNKTIONEN (v7) ---
     // ===================================
 
-    /**
-     * Phase A - Der "Pre-Flight Check" (Mit v6-Meta-Logging)
-     */
+    // Phase A: Pre-Flight Check
     async function requestAllPermissions() {
         addLogEntry("Phase A: Fordere Berechtigungen an...");
         statusEl.textContent = "Berechtigungen anfordern...";
@@ -217,7 +202,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // 2. Audio
-        permissionsState.audio = await updateDeviceList(true); // 'true' = erster Aufruf
+        permissionsState.audio = await updateDeviceList(true);
         if (permissionsState.audio) {
             addLogEntry("DEBUG: BERECHTIGUNG: Audio (für Geräteliste) erteilt.");
         }
@@ -233,7 +218,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 addLogEntry(`DEBUG: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error');
             }
         } else {
-            permissionsState.motion = true; // Android (implizit erteilt)
+            permissionsState.motion = true; // Android
             addLogEntry("DEBUG: BERECHTIGUNG: Bewegungssensor (Android/implizit) OK.");
         }
 
@@ -248,22 +233,20 @@ document.addEventListener("DOMContentLoaded", () => {
                  addLogEntry(`DEBUG: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error');
             }
         } else {
-            permissionsState.orientation = true; // Android (implizit erteilt)
+            permissionsState.orientation = true; // Android
             addLogEntry("DEBUG: BERECHTIGUNG: Orientierungssensor (Android/implizit) OK.");
         }
         
         addLogEntry("Phase A: Pre-Flight Check beendet.");
-        return permissionsState.gps; // Nur zurückgeben, ob das *kritische* (GPS) OK ist
+        return permissionsState.gps;
     }
 
-    /**
-     * Phase B - Startet alle Logger (Mit v6-Meta-Logging)
-     */
+    // Phase B: Startet alle Logger
     function startAllLoggers() {
         addLogEntry("Phase B: Starte alle Logger...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
 
-        // 1. GPS-Logger (Muss vorhanden sein)
+        // 1. GPS-Logger
         const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
         geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
         addLogEntry("DEBUG: 'geolocation.watchPosition' Listener angehängt.");
@@ -272,18 +255,19 @@ document.addEventListener("DOMContentLoaded", () => {
         if (permissionsState.audio && navigator.mediaDevices) {
             navigator.mediaDevices.ondevicechange = logDeviceChange;
             addLogEntry("DEBUG: 'mediaDevices.ondevicechange' Listener angehängt.");
-            updateDeviceList(false); // Logge den aktuellen Status beim Start
+            updateDeviceList(false);
         }
 
-        // 3. Bewegungs-Sensor-Logger (UN-GEDROSSELT)
+        // 3. Bewegungs-Sensor-Logger
         if (permissionsState.motion) {
             window.addEventListener('devicemotion', logDeviceMotion);
             addLogEntry("DEBUG: 'devicemotion' Listener angehängt.");
         }
-
-Plugin-Ausführung: Fehler bei der Ausführung von `core.read_from_clipboard`: Zugriff verweigert.
-
-        // 4. Orientierungs-Sensor-Logger (UN-GEDROSSELT)
+        
+        // --- HIER WAR DER FEHLER IN v6 ---
+        // Die fehlerhafte "Plugin..."-Zeile wurde entfernt.
+        
+        // 4. Orientierungs-Sensor-Logger
         if (permissionsState.orientation) {
             window.addEventListener('deviceorientation', logDeviceOrientation);
             addLogEntry("DEBUG: 'deviceorientation' Listener angehängt.");
@@ -299,7 +283,7 @@ Plugin-Ausführung: Fehler bei der Ausführung von `core.read_from_clipboard`: Z
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (Überarbeitet v6) ---
+    // --- BUTTON-HANDLER (v7) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
@@ -324,14 +308,13 @@ Plugin-Ausführung: Fehler bei der Ausführung von `core.read_from_clipboard`: Z
 
     // START
     startBtn.onclick = () => {
-        // Setze alles zurück für einen sauberen Lauf
         logEntries = [];
         flightRecorderBuffer = [];
         logAreaEl.value = "";
-        motionSensorHasFired = false; // v6-Flag zurücksetzen
-        orientationSensorHasFired = false; // v6-Flag zurücksetzen
+        motionSensorHasFired = false;
+        orientationSensorHasFired = false; 
         
-        addLogEntry("Logging-Prozess angefordert (v6)...");
+        addLogEntry("Logging-Prozess angefordert (v7)...");
         startAllLoggers();
     };
 
@@ -349,29 +332,25 @@ Plugin-Ausführung: Fehler bei der Ausführung von `core.read_from_clipboard`: Z
         flightRecorderBuffer = [];
         addLogEntry("Logging gestoppt.");
 
-        // UI-Status
         statusEl.textContent = "Status: Gestoppt. Download bereit.";
         startBtn.disabled = false;
-        permissionBtn.disabled = false; // Wieder freigeben
+        permissionBtn.disabled = false;
         stopBtn.disabled = true;
         crashBtn.disabled = true;
         downloadBtn.disabled = false; 
     };
 
-    // ABSTURZ MARKIEREN (v5)
+    // ABSTURZ MARKIEREN
     crashBtn.onclick = () => {
         if (!isLogging) return;
         
         const markerTime = getTimestamp();
         addLogEntry(`\n--- !!! ABSTURZ VOM NUTZER MARKIERT (${markerTime}) !!! ---`, 'warn');
         
-        // --- FLUGSCHREIBER-DUMP ---
         addLogEntry(`--- START FLUGSCHREIBER-DUMP (Letzte ${FLIGHT_RECORDER_DURATION_MS}ms) ---`, 'warn');
-        
         if (flightRecorderBuffer.length === 0) {
             addLogEntry(" (Flugschreiber-Puffer ist leer) ", 'warn');
         } else {
-            // Gehe durch eine KOPIE des Puffers
             [...flightRecorderBuffer].forEach(entry => {
                 const timeDiff = new Date(markerTime).getTime() - entry.timestamp;
                 const timeAgo = (timeDiff / 1000).toFixed(3);
@@ -379,13 +358,12 @@ Plugin-Ausführung: Fehler bei der Ausführung von `core.read_from_clipboard`: Z
             });
         }
         addLogEntry("--- ENDE FLUGSCHREIBER-DUMP ---\n", 'warn');
-        // --- ENDE DUMP ---
         
         statusEl.textContent = "ABSTURZ MARKIERT & DUMP ERSTELLT!";
         setTimeout(() => { if(isLogging) statusEl.textContent = "LOGGING..."; }, 3000);
     };
 
-    // DOWNLOAD (v5)
+    // DOWNLOAD
     downloadBtn.onclick = () => {
         if (logEntries.length === 0) {
             alert("Keine Logs zum Herunterladen vorhanden.");
@@ -393,7 +371,7 @@ Plugin-Ausführung: Fehler bei der Ausführung von `core.read_from_clipboard`: Z
         }
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain' });
-        const filename = `waze_log_v6_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v7_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
