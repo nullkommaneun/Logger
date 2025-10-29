@@ -1,15 +1,15 @@
 /*
- * Waze Korrelations-Logger - v7 (KORRIGIERT)
- * ================================================
+ * Waze Korrelations-Logger - v8 "Schlagloch-Detektor"
+ * ==================================================
  *
- * FEHLERBEHEBUNG:
- * 1. Der versehentlich einkopierte "Plugin-Ausführung..."-Fehler
- * aus v6 wurde in `startAllLoggers` entfernt.
+ * OPTIMIERUNG (Der Sparingpartner-Plan v8):
+ * 1. Die "Jolt Detection" (Stoßerkennung) löst jetzt
+ * AUTOMATISCH einen Flugschreiber-Dump aus.
+ * 2. Die Dump-Logik wurde in eine eigene Funktion
+ * `dumpFlightRecorder()` ausgelagert, damit
+ * beide (manueller Button + Jolt) sie nutzen können.
  *
- * Alle anderen Funktionen (v5/v6 Meta-Logging) sind intakt.
- * Dieser Code sollte jetzt vom neuen `debugger.js` überwacht werden.
- *
- * Gebaut von deinem Sparingpartner.
+ * Das ist jetzt eine echte Blackbox.
  */
 "use strict";
 
@@ -37,8 +37,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- v5: Flugschreiber & Jolt Detection ---
     let flightRecorderBuffer = [];
     const FLIGHT_RECORDER_DURATION_MS = 2500;
-    const JOLT_THRESHOLD_MS2 = 25.0;
-    const JOLT_COOLDOWN_MS = 3000;
+    const JOLT_THRESHOLD_MS2 = 25.0; // 25 m/s^2 (ca. 2.5G über der Ruhe)
+    const JOLT_COOLDOWN_MS = 5000; // 5 Sek. Cooldown nach einem Stoß
     let lastJoltTime = 0;
 
     // --- Universal-Funktion zum Loggen (ins Haupt-Log) ---
@@ -71,12 +71,35 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    // --- v8: NEUE ausgelagerte Dump-Funktion ---
+    /**
+     * Liest den Flugschreiber-Puffer aus und schreibt ihn
+     * formatiert in das Haupt-Log.
+     */
+    function dumpFlightRecorder(markerTime, reason) {
+        addLogEntry(`\n--- !!! ${reason} (${markerTime}) !!! ---`, 'warn');
+        addLogEntry(`--- START FLUGSCHREIBER-DUMP (Letzte ${FLIGHT_RECORDER_DURATION_MS}ms) ---`, 'warn');
+        
+        if (flightRecorderBuffer.length === 0) {
+            addLogEntry(" (Flugschreiber-Puffer ist leer) ", 'warn');
+        } else {
+            // Gehe durch eine KOPIE des Puffers
+            [...flightRecorderBuffer].forEach(entry => {
+                const timeDiff = new Date(markerTime).getTime() - entry.timestamp;
+                const timeAgo = (timeDiff / 1000).toFixed(3); // z.B. "1.234s zuvor"
+                addLogEntry(`[T-${timeAgo}s] | ${entry.type} | ${entry.dataString}`, 'info');
+            });
+        }
+        addLogEntry("--- ENDE FLUGSCHREIBER-DUMP ---\n", 'warn');
+    }
+
     // ===================================
-    // --- SENSOR-HANDLER (Überarbeitet v6) ---
+    // --- SENSOR-HANDLER (Überarbeitet v8) ---
     // ===================================
 
     // 1. GPS-Erfolg
     function logPosition(position) {
+        // ... (identisch zu v7)
         const coords = position.coords;
         const isOnline = navigator.onLine;
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
@@ -87,6 +110,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 2. GPS-Fehler
     function logError(error) {
+        // ... (identisch zu v7)
         let message = '';
         switch(error.code) {
             case error.PERMISSION_DENIED: message = "GPS-Zugriff verweigert"; break;
@@ -100,12 +124,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 3. Audio/Bluetooth-Geräte-Änderung
     function logDeviceChange() {
+        // ... (identisch zu v7)
         addLogEntry('BT/AUDIO-EVENT: Geräte-Änderung erkannt!', 'warn');
         updateDeviceList(false);
     }
 
     // 4. Geräteliste auslesen
     async function updateDeviceList(isInitialCall = false) {
+        // ... (identisch zu v7)
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
                 addLogEntry("BT/AUDIO-FEHLER: MediaDevices API nicht unterstützt.", 'error');
@@ -140,12 +166,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 5. Bewegungssensor
+    // 5. Bewegungssensor (Mit v8 Auto-Dump)
     function logDeviceMotion(event) {
         const now = Date.now();
         const acc = event.accelerationIncludingGravity;
 
         if (!motionSensorHasFired) {
+            // ... (identisch zu v7)
             motionSensorHasFired = true;
             if (!acc || acc.x === null) {
                 addLogEntry("DEBUG: 'devicemotion' feuert, ABER DATEN SIND NULL.", 'warn');
@@ -153,18 +180,26 @@ document.addEventListener("DOMContentLoaded", () => {
                 addLogEntry("DEBUG: 'devicemotion' feuert erfolgreich mit Daten.", 'info');
             }
         }
+        
         if (!acc || acc.x === null) return; 
+
+        // 5a. Daten für den Flugschreiber
         const dataString = `X: ${acc.x.toFixed(2)} | Y: ${acc.y.toFixed(2)} | Z: ${acc.z.toFixed(2)}`;
         pushToFlightRecorder(now, 'MOTION', dataString);
+
+        // 5b. v8 Jolt Detection (mit Auto-Dump)
         const gForce = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
         if (gForce > JOLT_THRESHOLD_MS2 && (now - lastJoltTime > JOLT_COOLDOWN_MS)) {
             lastJoltTime = now;
-            addLogEntry(`--- !!! HARTER STOSS ERKANNT (G-Force: ${gForce.toFixed(1)}) !!! ---`, 'warn');
+            const reason = `HARTER STOSS ERKANNT (G-Force: ${gForce.toFixed(1)})`;
+            // AUTOMATISCHER DUMP
+            dumpFlightRecorder(getTimestamp(), reason);
         }
     }
 
     // 6. Orientierungssensor
     function logDeviceOrientation(event) {
+        // ... (identisch zu v7)
         const now = Date.now();
         if (!orientationSensorHasFired) {
             orientationSensorHasFired = true;
@@ -181,15 +216,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
     // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v7) ---
+    // --- STEUERUNGS-FUNKTIONEN (v8) ---
     // ===================================
 
     // Phase A: Pre-Flight Check
     async function requestAllPermissions() {
+        // ... (identisch zu v7)
         addLogEntry("Phase A: Fordere Berechtigungen an...");
         statusEl.textContent = "Berechtigungen anfordern...";
         
-        // 1. GPS
         try {
             if (!navigator.geolocation) throw new Error("Geolocation wird nicht unterstützt.");
             await new Promise((resolve, reject) => {
@@ -201,15 +236,13 @@ document.addEventListener("DOMContentLoaded", () => {
             addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error');
         }
 
-        // 2. Audio
         permissionsState.audio = await updateDeviceList(true);
         if (permissionsState.audio) {
             addLogEntry("DEBUG: BERECHTIGUNG: Audio (für Geräteliste) erteilt.");
         }
 
-        // 3. Bewegung (iOS)
         if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
-            addLogEntry("DEBUG: iOS-Gerät erkannt, fordere 'DeviceMotionEvent'-Berechtigung an...");
+            addLogEntry("DEBUG: 'requestPermission' Motion-API erkannt, fordere an...");
             try {
                 const state = await DeviceMotionEvent.requestPermission();
                 permissionsState.motion = (state === 'granted');
@@ -218,13 +251,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 addLogEntry(`DEBUG: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error');
             }
         } else {
-            permissionsState.motion = true; // Android
+            permissionsState.motion = true;
             addLogEntry("DEBUG: BERECHTIGUNG: Bewegungssensor (Android/implizit) OK.");
         }
 
-        // 4. Orientierung (iOS)
         if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
-            addLogEntry("DEBUG: iOS-Gerät erkannt, fordere 'DeviceOrientationEvent'-Berechtigung an...");
+            addLogEntry("DEBUG: 'requestPermission' Orientation-API erkannt, fordere an...");
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
                 permissionsState.orientation = (state === 'granted');
@@ -233,7 +265,7 @@ document.addEventListener("DOMContentLoaded", () => {
                  addLogEntry(`DEBUG: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error');
             }
         } else {
-            permissionsState.orientation = true; // Android
+            permissionsState.orientation = true;
             addLogEntry("DEBUG: BERECHTIGUNG: Orientierungssensor (Android/implizit) OK.");
         }
         
@@ -243,38 +275,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Phase B: Startet alle Logger
     function startAllLoggers() {
+        // ... (identisch zu v7)
         addLogEntry("Phase B: Starte alle Logger...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
 
-        // 1. GPS-Logger
         const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
         geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
         addLogEntry("DEBUG: 'geolocation.watchPosition' Listener angehängt.");
         
-        // 2. BT/Audio-Logger
         if (permissionsState.audio && navigator.mediaDevices) {
             navigator.mediaDevices.ondevicechange = logDeviceChange;
             addLogEntry("DEBUG: 'mediaDevices.ondevicechange' Listener angehängt.");
             updateDeviceList(false);
         }
 
-        // 3. Bewegungs-Sensor-Logger
         if (permissionsState.motion) {
             window.addEventListener('devicemotion', logDeviceMotion);
             addLogEntry("DEBUG: 'devicemotion' Listener angehängt.");
         }
         
-        // --- HIER WAR DER FEHLER IN v6 ---
-        // Die fehlerhafte "Plugin..."-Zeile wurde entfernt.
-        
-        // 4. Orientierungs-Sensor-Logger
         if (permissionsState.orientation) {
             window.addEventListener('deviceorientation', logDeviceOrientation);
             addLogEntry("DEBUG: 'deviceorientation' Listener angehängt.");
         }
         
         isLogging = true;
-        // UI-Status aktualisieren
         startBtn.disabled = true;
         permissionBtn.disabled = true;
         stopBtn.disabled = false;
@@ -283,11 +308,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (v7) ---
+    // --- BUTTON-HANDLER (v8) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
     permissionBtn.onclick = async () => {
+        // ... (identisch zu v7)
         permissionBtn.disabled = true;
         statusEl.textContent = "Prüfe Berechtigungen...";
         logEntries = [];
@@ -308,18 +334,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // START
     startBtn.onclick = () => {
+        // ... (identisch zu v7)
         logEntries = [];
         flightRecorderBuffer = [];
         logAreaEl.value = "";
         motionSensorHasFired = false;
         orientationSensorHasFired = false; 
         
-        addLogEntry("Logging-Prozess angefordert (v7)...");
+        addLogEntry("Logging-Prozess angefordert (v8)...");
         startAllLoggers();
     };
 
     // STOP
     stopBtn.onclick = () => {
+        // ... (identisch zu v7)
         if (!isLogging) return;
         
         if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
@@ -340,38 +368,28 @@ document.addEventListener("DOMContentLoaded", () => {
         downloadBtn.disabled = false; 
     };
 
-    // ABSTURZ MARKIEREN
+    // ABSTURZ MARKIEREN (v8)
     crashBtn.onclick = () => {
         if (!isLogging) return;
         
         const markerTime = getTimestamp();
-        addLogEntry(`\n--- !!! ABSTURZ VOM NUTZER MARKIERT (${markerTime}) !!! ---`, 'warn');
-        
-        addLogEntry(`--- START FLUGSCHREIBER-DUMP (Letzte ${FLIGHT_RECORDER_DURATION_MS}ms) ---`, 'warn');
-        if (flightRecorderBuffer.length === 0) {
-            addLogEntry(" (Flugschreiber-Puffer ist leer) ", 'warn');
-        } else {
-            [...flightRecorderBuffer].forEach(entry => {
-                const timeDiff = new Date(markerTime).getTime() - entry.timestamp;
-                const timeAgo = (timeDiff / 1000).toFixed(3);
-                addLogEntry(`[T-${timeAgo}s] | ${entry.type} | ${entry.dataString}`, 'info');
-            });
-        }
-        addLogEntry("--- ENDE FLUGSCHREIBER-DUMP ---\n", 'warn');
+        // Nutze die neue, ausgelagerte Funktion
+        dumpFlightRecorder(markerTime, "ABSTURZ VOM NUTZER MARKIERT");
         
         statusEl.textContent = "ABSTURZ MARKIERT & DUMP ERSTELLT!";
         setTimeout(() => { if(isLogging) statusEl.textContent = "LOGGING..."; }, 3000);
     };
 
-    // DOWNLOAD
+    // DOWNLOAD (v8)
     downloadBtn.onclick = () => {
+        // ... (identisch zu v7)
         if (logEntries.length === 0) {
             alert("Keine Logs zum Herunterladen vorhanden.");
             return;
         }
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain' });
-        const filename = `waze_log_v7_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v8_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
@@ -380,5 +398,3 @@ document.addEventListener("DOMContentLoaded", () => {
         document.body.removeChild(a);
     };
 });
-
-
