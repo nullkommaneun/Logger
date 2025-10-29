@@ -1,21 +1,23 @@
 /*
- * Waze Korrelations-Logger - v10 "Netzwerk-Spion"
- * ==================================================
+ * Waze Korrelations-Logger - v11 "Permission-Stethoskop"
+ * =======================================================
  *
- * FEHLERBEHEBUNG (aus Log v9):
- * 1. Das BT/Audio-Polling (v9) war ein FEHLSCHLAG. Der
- * Browser lügt im Hintergrund über die Geräteliste.
+ * FEHLERBEHEBUNG (aus Debug-Log v10):
+ * 1. Die App friert beim Klick auf "PRE-FLIGHT CHECK" ein.
+ * 2. Hypothese: Problem liegt im Aufruf der
+ * `requestPermission()` für Motion/Orientation.
  *
- * OPTIMIERUNG (v10):
- * 1. Das BT/Audio-Polling wird ENTFERNT.
- * 2. Es wird durch einen Polling-Timer für die
- * "NetworkInformation" API (`navigator.connection.type`)
- * ersetzt.
- * 3. Wir suchen jetzt nach Änderungen im Netzwerktyp
- * (z.B. von 'cellular' zu 'wifi'), um den
- * Wireless-AA-Handshake zu erkennen.
+ * OPTIMIERUNG (v11):
+ * 1. Detailliertes Debug-Logging INNHERHALB von
+ * `requestAllPermissions` hinzugefügt (vor/nach
+ * jeder `await`-Zeile).
+ * 2. Jede `requestPermission`-Anfrage ist jetzt in
+ * einem eigenen `try...catch`-Block, um Fehler
+ * gezielt abzufangen.
+ * 3. Eine kleine Verzögerung (500ms) zwischen Motion-
+ * und Orientation-Anfrage eingefügt.
  *
- * Das ist unser neuer "Rauchender Colt".
+ * Wir hören jetzt genau hin, wo es knallt.
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -40,8 +42,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- v10: Netzwerk-Polling-Status ---
     let networkCheckInterval = null;
-    let lastNetworkType = ""; // Unser neuer "Speicher"
-    const NETWORK_POLL_INTERVAL_MS = 3000; // Alle 3 Sekunden
+    let lastNetworkType = ""; 
+    const NETWORK_POLL_INTERVAL_MS = 3000; 
 
     // --- v6: DEBUG Heartbeat Flags ---
     let motionSensorHasFired = false;
@@ -53,6 +55,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const JOLT_THRESHOLD_MS2 = 25.0; 
     const JOLT_COOLDOWN_MS = 5000; 
     let lastJoltTime = 0;
+
+    // --- Hilfsfunktion: Delay ---
+    function delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
 
     // --- Universal-Funktion zum Loggen (ins Haupt-Log) ---
     function getTimestamp() {
@@ -102,12 +109,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- SENSOR-HANDLER (Überarbeitet v10) ---
+    // --- SENSOR-HANDLER (v11 - Keine Änderung hier) ---
     // ===================================
 
     // 1. GPS-Erfolg
     function logPosition(position) {
-        // v10: Wir loggen 'isOnline' nicht mehr hier, da der Netzwerk-Logger das jetzt besser macht.
         const coords = position.coords;
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
         const logData = [ `GPS-OK | Acc: ${coords.accuracy.toFixed(1)}m`, `Speed: ${speedKmh} km/h` ];
@@ -117,7 +123,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 2. GPS-Fehler
     function logError(error) {
-        // (identisch zu v8)
         let message = '';
         switch(error.code) {
             case error.PERMISSION_DENIED: message = "GPS-Zugriff verweigert"; break;
@@ -128,43 +133,37 @@ document.addEventListener("DOMContentLoaded", () => {
         addLogEntry(`GPS-FEHLER: ${message}`, 'error');
         statusEl.textContent = "Fehler: GPS-Problem!";
     }
-
-    // 3. (GELÖSCHT) Audio-Polling (v9)
-
-    // 4. v10: Intelligente Netzwerk-Polling-Funktion
+    
+    // 3. v10: Intelligente Netzwerk-Polling-Funktion
     function checkNetworkState(isInitialCall = false) {
-        if (!permissionsState.network) return; // API nicht verfügbar
+        if (!permissionsState.network) return; 
 
         try {
             const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
             const isOnline = navigator.onLine;
-            const currentType = connection ? connection.type : 'unknown'; // z.B. 'cellular', 'wifi'
+            const currentType = connection ? connection.type : 'unknown'; 
 
             const logString = `NETZWERK-STATUS: Online: ${isOnline} | Typ: ${currentType}`;
 
-            // Das ist die "intelligente" v10-Logik:
-            // Logge NUR, wenn sich der Typ ändert ODER es der allererste Aufruf ist.
             if (currentType !== lastNetworkType || isInitialCall) {
                 if (isInitialCall) {
-                    addLogEntry(logString, 'info'); // Nur als Info beim Start
+                    addLogEntry(logString, 'info'); 
                 } else {
                     addLogEntry('NETZWERK-EVENT: Verbindungstyp geändert!', 'warn');
                     addLogEntry(logString, 'warn');
                 }
-                lastNetworkType = currentType; // Zustand speichern
+                lastNetworkType = currentType; 
             }
         } catch (err) {
             addLogEntry(`NETZWERK-FEHLER: ${err.message}`, 'error');
-            // Deaktivieren, um Fehler-Spam zu verhindern
             permissionsState.network = false; 
             if (networkCheckInterval) clearInterval(networkCheckInterval);
         }
     }
 
 
-    // 5. Bewegungssensor
+    // 4. Bewegungssensor
     function logDeviceMotion(event) {
-        // (identisch zu v8)
         const now = Date.now();
         const acc = event.accelerationIncludingGravity;
 
@@ -190,16 +189,15 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 6. Orientierungssensor
+    // 5. Orientierungssensor
     function logDeviceOrientation(event) {
-        // (identisch zu v8)
         const now = Date.now();
         if (!orientationSensorHasFired) {
             orientationSensorHasFired = true;
             if (event.alpha === null) {
                 addLogEntry("DEBUG: 'deviceorientation' feuert, ABER DATEN SIND NULL.", 'warn');
             } else {
-                addLogE`[${timestamp}] ${message}`ntry("DEBUG: 'deviceorientation' feuert erfolgreich mit Daten.", 'info');
+                addLogEntry("DEBUG: 'deviceorientation' feuert erfolgreich mit Daten.", 'info');
             }
         }
         if (event.alpha === null) return;
@@ -208,66 +206,86 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v10) ---
+    // --- STEUERUNGS-FUNKTIONEN (v11) ---
     // ===================================
 
-    // Phase A: Pre-Flight Check
+    // Phase A: Pre-Flight Check (Mit Stethoskop)
     async function requestAllPermissions() {
-        addLogEntry("Phase A: Fordere Berechtigungen an...");
+        addLogEntry("Phase A: Fordere Berechtigungen an (v11)...");
         statusEl.textContent = "Berechtigungen anfordern...";
         
-        // 1. GPS
+        // --- GPS ---
+        addLogEntry("DEBUG v11: Fordere GPS an...");
         try {
             if (!navigator.geolocation) throw new Error("Geolocation wird nicht unterstützt.");
             await new Promise((resolve, reject) => {
                 navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
             });
             permissionsState.gps = true;
-            addLogEntry("DEBUG: BERECHTIGUNG: GPS erteilt.");
+            addLogEntry("DEBUG v11: BERECHTIGUNG: GPS erteilt.");
         } catch (err) {
             addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error');
+            permissionsState.gps = false; // Sicherstellen, dass es false ist
         }
+        addLogEntry("DEBUG v11: GPS-Anfrage abgeschlossen.");
 
-        // 2. v10: Netzwerk-API-Check
+        // --- Netzwerk ---
+        addLogEntry("DEBUG v11: Prüfe Netzwerk-API...");
         if ('connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator) {
             permissionsState.network = true;
-            addLogEntry("DEBUG: BERECHTIGUNG: Netzwerk-API (`navigator.connection`) gefunden.");
+            addLogEntry("DEBUG v11: BERECHTIGUNG: Netzwerk-API (`navigator.connection`) gefunden.");
         } else {
             addLogEntry("BERECHTIGUNG: Netzwerk-API wird nicht unterstützt!", 'warn');
         }
+        addLogEntry("DEBUG v11: Netzwerk-API-Check abgeschlossen.");
 
-        // 3. Bewegung (iOS / Modernes Android)
+        // --- Bewegung ---
+        addLogEntry("DEBUG v11: Prüfe Bewegungssensor...");
         if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
-            addLogEntry("DEBUG: 'requestPermission' Motion-API erkannt, fordere an...");
+            addLogEntry("DEBUG v11: 'requestPermission' Motion-API erkannt, fordere an...");
             try {
                 const state = await DeviceMotionEvent.requestPermission();
                 permissionsState.motion = (state === 'granted');
-                addLogEntry(`DEBUG: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+                addLogEntry(`DEBUG v11: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
             } catch (err) { 
-                addLogEntry(`DEBUG: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error');
+                addLogEntry(`DEBUG v11: BERECHTIGUNG: Bewegungssensor-Fehler bei Anfrage: ${err.message}`, 'error');
+                permissionsState.motion = false;
             }
+        } else if ('DeviceMotionEvent' in window) {
+             permissionsState.motion = true; // Android ohne explizite Anfrage
+             addLogEntry("DEBUG v11: BERECHTIGUNG: Bewegungssensor (Android/implizit) OK.");
         } else {
-            permissionsState.motion = true; // Android
-            addLogEntry("DEBUG: BERECHTIGUNG: Bewegungssensor (Android/implizit) OK.");
+             addLogEntry("BERECHTIGUNG: Bewegungssensor wird nicht unterstützt!", 'error');
+             permissionsState.motion = false;
         }
+        addLogEntry("DEBUG v11: Bewegungssensor-Check abgeschlossen.");
 
-        // 4. Orientierung (iOS / Modernes Android)
+
+        // --- Orientierung ---
+        addLogEntry("DEBUG v11: Füge kleine Pause ein (500ms)...");
+        await delay(500); // Atem-Pause für den Browser
+        addLogEntry("DEBUG v11: Prüfe Orientierungssensor...");
         if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
-             addLogEntry("DEBUG: 'requestPermission' Orientation-API erkannt, fordere an...");
+             addLogEntry("DEBUG v11: 'requestPermission' Orientation-API erkannt, fordere an...");
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
                 permissionsState.orientation = (state === 'granted');
-                addLogEntry(`DEBUG: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+                addLogEntry(`DEBUG v11: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
             } catch (err) {
-                 addLogEntry(`DEBUG: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error');
+                 addLogEntry(`DEBUG v11: BERECHTIGUNG: Orientierungssensor-Fehler bei Anfrage: ${err.message}`, 'error');
+                 permissionsState.orientation = false;
             }
+        } else if ('DeviceOrientationEvent' in window) {
+            permissionsState.orientation = true; // Android ohne explizite Anfrage
+            addLogEntry("DEBUG v11: BERECHTIGUNG: Orientierungssensor (Android/implizit) OK.");
         } else {
-            permissionsState.orientation = true; // Android
-            addLogEntry("DEBUG: BERECHTIGUNG: Orientierungssensor (Android/implizit) OK.");
+             addLogEntry("BERECHTIGUNG: Orientierungssensor wird nicht unterstützt!", 'error');
+             permissionsState.orientation = false;
         }
+        addLogEntry("DEBUG v11: Orientierungssensor-Check abgeschlossen.");
         
         addLogEntry("Phase A: Pre-Flight Check beendet.");
-        return permissionsState.gps;
+        return permissionsState.gps; // Wir brauchen GPS als Minimum
     }
 
     // Phase B: Startet alle Logger
@@ -280,23 +298,27 @@ document.addEventListener("DOMContentLoaded", () => {
         geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
         addLogEntry("DEBUG: 'geolocation.watchPosition' Listener angehängt.");
         
-        // 2. v10: Netzwerk-POLLING-Timer
+        // 2. Netzwerk-POLLING-Timer
         if (permissionsState.network) {
             networkCheckInterval = setInterval(checkNetworkState, NETWORK_POLL_INTERVAL_MS);
             addLogEntry(`DEBUG: Netzwerk-Polling-Timer gestartet (Intervall: ${NETWORK_POLL_INTERVAL_MS}ms).`);
-            checkNetworkState(true); // Logge den initialen Status
+            checkNetworkState(true); 
         }
 
         // 3. Bewegungs-Sensor-Logger
         if (permissionsState.motion) {
             window.addEventListener('devicemotion', logDeviceMotion);
             addLogEntry("DEBUG: 'devicemotion' Listener angehängt.");
+        } else {
+             addLogEntry("WARNUNG: Bewegungssensor-Listener NICHT angehängt (Keine Berechtigung oder Unterstützung).", 'warn');
         }
         
         // 4. Orientierungs-Sensor-Logger
         if (permissionsState.orientation) {
             window.addEventListener('deviceorientation', logDeviceOrientation);
             addLogEntry("DEBUG: 'deviceorientation' Listener angehängt.");
+        } else {
+            addLogEntry("WARNUNG: Orientierungssensor-Listener NICHT angehängt (Keine Berechtigung oder Unterstützung).", 'warn');
         }
         
         isLogging = true;
@@ -308,27 +330,31 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (v10) ---
+    // --- BUTTON-HANDLER (v11) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
     permissionBtn.onclick = async () => {
         permissionBtn.disabled = true;
+        startBtn.disabled = true; // Sicherstellen, dass Start nicht klickbar ist
         statusEl.textContent = "Prüfe Berechtigungen...";
         logEntries = [];
         flightRecorderBuffer = [];
         logAreaEl.value = "";
-        lastNetworkType = ""; // v10: Status zurücksetzen
+        lastNetworkType = ""; 
+        // Reset permissions state before requesting
+        permissionsState = { gps: false, motion: false, orientation: false, network: false };
         
         const gpsOk = await requestAllPermissions();
 
         if (gpsOk) {
             statusEl.textContent = "Bereit zum Loggen! (GPS OK)";
-            startBtn.disabled = false;
+            startBtn.disabled = false; // Nur Start freigeben
             downloadBtn.disabled = true;
+            permissionBtn.disabled = true; // Bleibt deaktiviert, bis gestoppt wird
         } else {
             statusEl.textContent = "Fehler: GPS-Berechtigung benötigt!";
-            permissionBtn.disabled = false;
+            permissionBtn.disabled = false; // Erneut versuchen erlauben
         }
     };
 
@@ -339,9 +365,9 @@ document.addEventListener("DOMContentLoaded", () => {
         logAreaEl.value = "";
         motionSensorHasFired = false;
         orientationSensorHasFired = false; 
-        lastNetworkType = ""; // v10: Status zurücksetzen
+        lastNetworkType = ""; 
         
-        addLogEntry(`Logging-Prozess angefordert (v10)...`);
+        addLogEntry(`Logging-Prozess angefordert (v11)...`);
         startAllLoggers();
     };
 
@@ -349,9 +375,8 @@ document.addEventListener("DOMContentLoaded", () => {
     stopBtn.onclick = () => {
         if (!isLogging) return;
         
-        // Alle Listener und Timer stoppen
         if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
-        if (networkCheckInterval) clearInterval(networkCheckInterval); // v10: Polling-Timer stoppen
+        if (networkCheckInterval) clearInterval(networkCheckInterval); 
         
         window.removeEventListener('devicemotion', logDeviceMotion);
         window.removeEventListener('deviceorientation', logDeviceOrientation);
@@ -363,8 +388,8 @@ document.addEventListener("DOMContentLoaded", () => {
         addLogEntry("Logging gestoppt.");
 
         statusEl.textContent = "Status: Gestoppt. Download bereit.";
-        startBtn.disabled = false;
-        permissionBtn.disabled = false;
+        startBtn.disabled = true; // Start erst nach neuem Pre-Flight
+        permissionBtn.disabled = false; // Pre-Flight wieder erlauben
         stopBtn.disabled = true;
         crashBtn.disabled = true;
         downloadBtn.disabled = false; 
@@ -389,7 +414,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain' });
-        const filename = `waze_log_v10_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v11_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
@@ -397,4 +422,10 @@ document.addEventListener("DOMContentLoaded", () => {
         a.click();
         document.body.removeChild(a);
     };
+
+    // Initialen Button-Status setzen
+    startBtn.disabled = true;
+    stopBtn.disabled = true;
+    crashBtn.disabled = true;
+    downloadBtn.disabled = true;
 });
