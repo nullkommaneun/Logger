@@ -3,45 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Waze Korrelations-Logger v7</title>
+    <title>Waze Logger v12 (Experimental)</title>
     <link rel="stylesheet" href="style.css">
-    
-    <!-- 
-      DER NEUE "SICHERUNGSKASTEN" (Debugger)
-      Wird ALS ERSTES geladen, um ALLES zu fangen.
-    -->
-    <script src="debugger.js"></script>
+    <!-- WICHTIG: Debugger MUSS ZUERST geladen werden -->
+    <script src="debugger.js" defer></script>
+    <script src="app.js" defer></script>
 </head>
 <body>
+    <div class="container">
+        <h1>Waze Korrelations-Logger v12</h1>
+        <p class="subtitle">(Mit Experimental Features)</p>
 
-    <!-- NEUER DEBUG-BEREICH -->
-    <div id="debug-container">
-        <h3>System-Debugger</h3>
-        <button id="copyDebugBtn">Debug-Log kopieren</button>
-        <pre id="debug-output">Debugger wird initialisiert...</pre>
+        <!-- v12: Warnhinweis für Flags -->
+        <div class="flag-warning">
+            <strong>Experimentell!</strong> Für volle Funktionalität (neue Sensoren, CPU-Last) müssen eventuell Flags in <code>chrome://flags</code> aktiviert werden (z.B. <code>#enable-generic-sensor</code>, <code>#enable-generic-sensor-extra-classes</code>, <code>#enable-compute-pressure</code>). Ohne Flags nutzt die App die Standard-Sensoren. Benutzung auf eigene Gefahr!
+        </div>
+
+        <div id="status">Status: Initialisiert...</div>
+
+        <div class="button-group">
+            <button id="permissionBtn">1. PRE-FLIGHT CHECK (Berechtigungen)</button>
+            <button id="startBtn" disabled>2. START LOGGING</button>
+            <button id="stopBtn" disabled>STOP LOGGING</button>
+            <button id="crashBtn" disabled class="warn-btn">!! ABSTURZ MARKIEREN !!</button>
+            <button id="downloadBtn" disabled>LOG HERUNTERLADEN (.txt)</button>
+        </div>
+
+        <label for="logArea">Haupt-Log:</label>
+        <textarea id="logArea" readonly>Warte auf Start...</textarea>
+
+        <label for="debugArea">Debugger-Log:</label>
+        <textarea id="debugArea" readonly>Debugger initialisiert...</textarea>
     </div>
-
-    <!-- Die eigentliche App -->
-    <div id="app-container">
-        <h2>Waze Korrelations-Logger</h2>
-        <p>Bitte erst Berechtigungen erteilen, dann loggen.</p>
-
-        <div id="status">Status: Bereit</div>
-
-        <button id="permissionBtn">1. PRE-FLIGHT CHECK</button>
-        <button id="startBtn" disabled>2. START LOGGING</button>
-        <button id="stopBtn" disabled>STOP LOGGING</button>
-        <button id="crashBtn" disabled>!! ABSTURZ MARKIERT !!</button>
-        <button id="downloadBtn" disabled>LOG HERUNTERLADEN</button>
-
-        <textarea id="logArea" readonly>Log-Einträge werden hier angezeigt...</textarea>
-    </div>
-
-    <!-- 
-      Die App-Logik wird ZULETZT geladen (mit 'defer'),
-      damit der Debugger sie fangen kann.
-    -->
-    <script src="app.js" defer></script>
 </body>
 </html>
 
