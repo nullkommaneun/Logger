@@ -1,26 +1,25 @@
 /*
- * Waze Korrelations-Logger - v13 "Fallback-Switch"
- * ==================================================
+ * Waze Korrelations-Logger - v14 "Anti-Schlaf-Hack"
+ * =================================================
  *
- * RÜCKZUG von v12 (Experimental), da Flags fehlen.
+ * ANALYSE v13-LOG:
+ * 1. ERFOLG: "Permission-Freeze" (v11) ist GELÖST.
+ * 2. ERFOLG: "Jolt Detection" (v8) & Flugschreiber
+ * funktionieren im Feldversuch PERFEKT.
+ * 3. FEHLER 1 (SCHWARZES LOCH v3): Der "Netzwerk-Spion" (v10)
+ * ist BLIND. Er erkennt die AA-WiFi-Direct-Verbindung nicht.
+ * Er wird daher in v14 wieder ENTFERNT.
+ * 4. FEHLER 2 (SCHWARZES LOCH v4 - SHOW-STOPPER):
+ * Der Log hat eine 3-Minuten-Lücke. Android OS (Doze)
+ * friert unsere Hintergrund-App ein.
  *
- * BASIS: v10 (Netzwerk-Spion) + v11 (Stethoskop)
- *
- * FEHLERBEHEBUNG (aus "Nichts geht mehr" Feedback):
- * 1. Die App friert beim Klick auf "PRE-FLIGHT CHECK" ein,
- * vermutlich wegen eines verbuggten `requestPermission`
- * Aufrufs im Chrome 141 auf Android 10.
- *
- * NEU in v13:
- * 1. Fügt eine Checkbox "Alte Sensor-API erzwingen" hinzu.
- * 2. `requestAllPermissions` liest diese Checkbox aus.
- * 3. WENN ANGEHAKT: Überspringt die App die riskanten
- * `requestPermission` Aufrufe für Motion/Orientation
- * komplett und erzwingt den "alten" Android-Weg.
- * 4. WENN NICHT ANGEHAKT: Versucht die App (wie v11)
- * die modernen APIs zu nutzen (was einfrieren kann).
- *
- * Das gibt dem "Bastler" die Kontrolle zurück.
+ * PLAN v14:
+ * 1. Wir implementieren einen "Anti-Schlaf-Hack".
+ * 2. Beim START wird ein stilles Audio (Gain=0) über die
+ * Web Audio API abgespielt, um dem OS vorzutäuschen,
+ * wir seien eine "Media App", die nicht einfrieren darf.
+ * 3. Dies ist Prio 1. Die Erkennung des AA-Handshakes
+ * wird auf v15 verschoben, bis der Logger wach bleibt.
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -36,18 +35,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const stopBtn = document.getElementById('stopBtn');
     const crashBtn = document.getElementById('crashBtn');
     const downloadBtn = document.getElementById('downloadBtn');
-    const fallbackToggle = document.getElementById('fallbackToggle'); // v13: Der Not-Aus-Schalter
-
+    const fallbackToggle = document.getElementById('fallbackToggle');
+    // v14: Dashboard (aus v14-Entwurf) wieder entfernt. Fokus auf Stabilität.
+    
     // --- Logger-Status ---
     let isLogging = false;
     let logEntries = [];
     let geoWatchId = null;
     let permissionsState = { gps: false, motion: false, orientation: false, network: false };
 
-    // --- v10: Netzwerk-Polling-Status ---
-    let networkCheckInterval = null;
-    let lastNetworkType = ""; 
-    const NETWORK_POLL_INTERVAL_MS = 3000; 
+    // --- v14: Anti-Schlaf-Audio-Kontext ---
+    let antiSleepContext = null;
+    let antiSleepOscillator = null;
 
     // --- v6: DEBUG Heartbeat Flags ---
     let motionSensorHasFired = false;
@@ -69,22 +68,15 @@ document.addEventListener("DOMContentLoaded", () => {
     function getTimestamp() {
         return new Date().toISOString();
     }
-
-    // Nutzen die globale Debug-Funktion, falls vorhanden
     const logDebug = (window.logDebug || console.log);
 
     function addLogEntry(message, level = 'info') {
         const logString = `${getTimestamp()} | ${message}`;
         logEntries.push(logString);
-
         if (level === 'error') console.error(logString);
         else if (level === 'warn') console.warn(logString);
         else console.log(logString);
-
-        if (logAreaEl) { // Sicherstellen, dass das Element existiert
-            logAreaEl.value = logEntries.slice(-100).join('\n');
-            logAreaEl.scrollTop = logAreaEl.scrollHeight;
-        }
+        updateLogDisplay();
     }
 
     function updateLogDisplay() {
@@ -94,7 +86,7 @@ document.addEventListener("DOMContentLoaded", () => {
          }
     }
 
-    // --- v5: Funktion für den Flugschreiber-Puffer ---
+    // --- v5: Flugschreiber-Funktionen ---
     function pushToFlightRecorder(timestamp, type, dataString) {
         flightRecorderBuffer.push({ timestamp, type, dataString });
         const cutoffTime = timestamp - FLIGHT_RECORDER_DURATION_MS;
@@ -102,15 +94,11 @@ document.addEventListener("DOMContentLoaded", () => {
             flightRecorderBuffer.shift();
         }
     }
-
-    // --- v8: Ausgelagerte Dump-Funktion ---
     function dumpFlightRecorder(markerTime, reason) {
         addLogEntry(`\n--- !!! ${reason} (${markerTime}) !!! ---`, 'warn');
         addLogEntry(`--- START FLUGSCHREIBER-DUMP (Letzte ${FLIGHT_RECORDER_DURATION_MS}ms) ---`, 'warn');
-        
-        if (flightRecorderBuffer.length === 0) {
-            addLogEntry(" (Flugschreiber-Puffer ist leer) ", 'warn');
-        } else {
+        if (flightRecorderBuffer.length === 0) { addLogEntry(" (Flugschreiber-Puffer ist leer) ", 'warn'); }
+        else {
             [...flightRecorderBuffer].forEach(entry => {
                 const timeDiff = new Date(markerTime).getTime() - entry.timestamp;
                 const timeAgo = (timeDiff / 1000).toFixed(3);
@@ -121,7 +109,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- SENSOR-HANDLER (Basis v10) ---
+    // --- SENSOR-HANDLER (v14) ---
     // ===================================
 
     // 1. GPS-Erfolg
@@ -130,7 +118,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
         const logData = [ `GPS-OK | Acc: ${coords.accuracy.toFixed(1)}m`, `Speed: ${speedKmh} km/h` ];
         addLogEntry(logData.join(' | '));
-        statusEl.textContent = `LOGGING... (GPS: ${coords.accuracy.toFixed(1)}m)`;
+        statusEl.textContent = `LOGGING... (GPS: ${coords.accuracy.toFixed(1)}m)`; // Status-Update
      }
 
     // 2. GPS-Fehler
@@ -146,45 +134,18 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Fehler: GPS-Problem!";
      }
     
-    // 3. v10: Intelligente Netzwerk-Polling-Funktion
-    function checkNetworkState(isInitialCall = false) {
-        if (!permissionsState.network) return; 
-        try {
-            const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-            const isOnline = navigator.onLine;
-            const currentType = connection ? connection.type : 'unknown'; 
-            const logString = `NETZWERK-STATUS: Online: ${isOnline} | Typ: ${currentType}`;
-            if (currentType !== lastNetworkType || isInitialCall) {
-                if (isInitialCall) { addLogEntry(logString, 'info'); }
-                else {
-                    addLogEntry('NETZWERK-EVENT: Verbindungstyp geändert!', 'warn');
-                    addLogEntry(logString, 'warn');
-                }
-                lastNetworkType = currentType; 
-            }
-        } catch (err) {
-            addLogEntry(`NETZWERK-FEHLER: ${err.message}`, 'error');
-            permissionsState.network = false; 
-            if (networkCheckInterval) clearInterval(networkCheckInterval);
-        }
-    }
-
-
-    // 4. Bewegungssensor (Alter Fallback-Weg)
+    // 3. Bewegungssensor
     function logDeviceMotion(event) {
         const now = Date.now();
         const acc = event.accelerationIncludingGravity;
-
         if (!motionSensorHasFired) {
             motionSensorHasFired = true;
             if (!acc || acc.x === null) { addLogEntry("DEBUG: 'devicemotion' feuert, ABER DATEN SIND NULL.", 'warn'); }
             else { addLogEntry("DEBUG: 'devicemotion' feuert erfolgreich mit Daten.", 'info'); }
         }
         if (!acc || acc.x === null) return; 
-
         const dataString = `X: ${acc.x.toFixed(2)} | Y: ${acc.y.toFixed(2)} | Z: ${acc.z.toFixed(2)}`;
         pushToFlightRecorder(now, 'MOTION', dataString);
-
         const gForce = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
         if (gForce > JOLT_THRESHOLD_MS2 && (now - lastJoltTime > JOLT_COOLDOWN_MS)) {
             lastJoltTime = now;
@@ -193,7 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 5. Orientierungssensor (Alter Fallback-Weg)
+    // 4. Orientierungssensor
     function logDeviceOrientation(event) {
         const now = Date.now();
         if (!orientationSensorHasFired) {
@@ -205,133 +166,139 @@ document.addEventListener("DOMContentLoaded", () => {
         const dataString = `Alpha(Z): ${event.alpha.toFixed(1)} | Beta(X): ${event.beta.toFixed(1)} | Gamma(Y): ${event.gamma.toFixed(1)}`;
         pushToFlightRecorder(now, 'ORIENTATION', dataString);
     }
-
-    // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v13) ---
-    // ===================================
-
-    // Phase A: Pre-Flight Check (Mit Stethoskop UND Fallback-Switch)
-    async function requestAllPermissions() {
-        addLogEntry("Phase A: Fordere Berechtigungen an (v13)...");
-        statusEl.textContent = "Berechtigungen anfordern...";
-        
-        // v13: Den Not-Aus-Schalter auslesen
-        const useFallback = fallbackToggle.checked;
-        if (useFallback) {
-            addLogEntry("DEBUG v13: 'Alte API erzwingen' ist AKTIV. Überspringe 'requestPermission'.", 'warn');
+    
+    // 5. v14: Anti-Schlaf-Hack (Stilles Audio)
+    function startAntiSleepAudio() {
+        try {
+            if (antiSleepContext) { antiSleepContext.close(); } // Alten Kontext schließen, falls vorhanden
+            
+            // 1. Audio-Kontext erstellen
+            antiSleepContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // 2. Oszillator (Ton-Generator) erstellen
+            antiSleepOscillator = antiSleepContext.createOscillator();
+            antiSleepOscillator.type = 'sine'; // Einfacher Sinus-Ton
+            antiSleepOscillator.frequency.setValueAtTime(1, antiSleepContext.currentTime); // 1 Hz (unhörbar)
+            
+            // 3. Gain-Node (Lautstärke) erstellen
+            const gainNode = antiSleepContext.createGain();
+            gainNode.gain.setValueAtTime(0.0, antiSleepContext.currentTime); // STUMM!
+            
+            // 4. Verbinden: Oszillator -> Lautstärke (stumm) -> Lautsprecher
+            antiSleepOscillator.connect(gainNode);
+            gainNode.connect(antiSleepContext.destination);
+            
+            // 5. Starten
+            antiSleepOscillator.start();
+            
+            addLogEntry("DEBUG: 'Anti-Schlaf-Hack' (Stilles Audio) gestartet.", 'info');
+            
+        } catch (e) {
+            addLogEntry(`FEHLER: 'Anti-Schlaf-Hack' konnte nicht gestartet werden: ${e.message}`, 'error');
         }
+    }
+    
+    function stopAntiSleepAudio() {
+         try {
+            if (antiSleepOscillator) {
+                antiSleepOscillator.stop();
+                antiSleepOscillator = null;
+            }
+            if (antiSleepContext) {
+                antiSleepContext.close();
+                antiSleepContext = null;
+            }
+            addLogEntry("DEBUG: 'Anti-Schlaf-Hack' (Stilles Audio) gestoppt.", 'info');
+         } catch (e) {
+             addLogEntry(`FEHLER: 'Anti-Schlaf-Hack' konnte nicht gestoppt werden: ${e.message}`, 'error');
+         }
+    }
+
+
+    // ===================================
+    // --- STEUERUNGS-FUNKTIONEN (v14) ---
+    // ===================================
+
+    // Phase A: Pre-Flight Check (Identisch zu v13, aber ohne Netzwerk-Check)
+    async function requestAllPermissions() {
+        addLogEntry("Phase A: Fordere Berechtigungen an (v14)...");
+        statusEl.textContent = "Berechtigungen anfordern...";
+        const useFallback = fallbackToggle.checked;
+        if (useFallback) { addLogEntry("DEBUG v14: 'Alte API erzwingen' ist AKTIV. Überspringe 'requestPermission'.", 'warn'); }
 
         // --- GPS ---
-        addLogEntry("DEBUG v13: Fordere GPS an...");
+        addLogEntry("DEBUG v14: Fordere GPS an...");
         try {
             if (!navigator.geolocation) throw new Error("Geolocation wird nicht unterstützt.");
             await new Promise((resolve, reject) => { navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 }); });
-            permissionsState.gps = true;
-            addLogEntry("DEBUG v13: BERECHTIGUNG: GPS erteilt.");
-        } catch (err) {
-            addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error');
-            permissionsState.gps = false;
-        }
-        addLogEntry("DEBUG v13: GPS-Anfrage abgeschlossen.");
+            permissionsState.gps = true; addLogEntry("DEBUG v14: BERECHTIGUNG: GPS erteilt.");
+        } catch (err) { addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error'); permissionsState.gps = false; }
+        addLogEntry("DEBUG v14: GPS-Anfrage abgeschlossen.");
 
-        // --- Netzwerk ---
-        addLogEntry("DEBUG v13: Prüfe Netzwerk-API...");
-        if ('connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator) {
-            permissionsState.network = true;
-            addLogEntry("DEBUG v13: BERECHTIGUNG: Netzwerk-API (`navigator.connection`) gefunden.");
-        } else {
-            addLogEntry("BERECHTIGUNG: Netzwerk-API wird nicht unterstützt!", 'warn');
-        }
-        addLogEntry("DEBUG v13: Netzwerk-API-Check abgeschlossen.");
+        // --- Netzwerk (v14: Entfernt. War nutzlos.) ---
+        permissionsState.network = false;
 
         // --- Bewegung ---
-        addLogEntry("DEBUG v13: Prüfe Bewegungssensor...");
-        // v13: Prüfe den Not-Aus-Schalter
+        addLogEntry("DEBUG v14: Prüfe Bewegungssensor...");
         if (useFallback) {
-            permissionsState.motion = true; // Wir nehmen an, dass es klappt
-            addLogEntry("DEBUG v13: BERECHTIGUNG: Bewegungssensor (Fallback erzwungen) OK.");
+            permissionsState.motion = true; addLogEntry("DEBUG v14: BERECHTIGUNG: Bewegungssensor (Fallback erzwungen) OK.");
         } else if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
-            addLogEntry("DEBUG v13: 'requestPermission' Motion-API erkannt, fordere an...");
+            addLogEntry("DEBUG v14: 'requestPermission' Motion-API erkannt, fordere an...");
             try {
                 const state = await DeviceMotionEvent.requestPermission();
                 permissionsState.motion = (state === 'granted');
-                addLogEntry(`DEBUG v13: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
-            } catch (err) { 
-                addLogEntry(`DEBUG v13: BERECHTIGUNG: Bewegungssensor-Fehler bei Anfrage: ${err.message}`, 'error');
-                permissionsState.motion = false;
-            }
+                addLogEntry(`DEBUG v14: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+            } catch (err) { addLogEntry(`DEBUG v14: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error'); permissionsState.motion = false; }
         } else if ('DeviceMotionEvent' in window) {
-             permissionsState.motion = true; // Android ohne explizite Anfrage
-             addLogEntry("DEBUG v13: BERECHTIGUNG: Bewegungssensor (Implizit/Alt) OK.");
-        } else {
-             addLogEntry("BERECHTIGUNG: Bewegungssensor wird nicht unterstützt!", 'error');
-             permissionsState.motion = false;
-        }
-        addLogEntry("DEBUG v13: Bewegungssensor-Check abgeschlossen.");
+             permissionsState.motion = true; addLogEntry("DEBUG v14: BERECHTIGUNG: Bewegungssensor (Implizit/Alt) OK.");
+        } else { addLogEntry("BERECHTIGUNG: Bewegungssensor wird nicht unterstützt!", 'error'); permissionsState.motion = false; }
+        addLogEntry("DEBUG v14: Bewegungssensor-Check abgeschlossen.");
 
         // --- Orientierung ---
-        addLogEntry("DEBUG v13: Füge kleine Pause ein (500ms)...");
-        await delay(500); 
-        addLogEntry("DEBUG v13: Prüfe Orientierungssensor...");
-        // v13: Prüfe den Not-Aus-Schalter
+        addLogEntry("DEBUG v14: Füge kleine Pause ein (500ms)..."); await delay(500); 
+        addLogEntry("DEBUG v14: Prüfe Orientierungssensor...");
         if (useFallback) {
-             permissionsState.orientation = true; // Wir nehmen an, dass es klappt
-             addLogEntry("DEBUG v13: BERECHTIGUNG: Orientierungssensor (Fallback erzwungen) OK.");
+             permissionsState.orientation = true; addLogEntry("DEBUG v14: BERECHTIGUNG: Orientierungssensor (Fallback erzwungen) OK.");
         } else if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
-             addLogEntry("DEBUG v13: 'requestPermission' Orientation-API erkannt, fordere an...");
+             addLogEntry("DEBUG v14: 'requestPermission' Orientation-API erkannt, fordere an...");
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
                 permissionsState.orientation = (state === 'granted');
-                addLogEntry(`DEBUG v13: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
-            } catch (err) {
-                 addLogEntry(`DEBUG v13: BERECHTIGUNG: Orientierungssensor-Fehler bei Anfrage: ${err.message}`, 'error');
-                 permissionsState.orientation = false;
-            }
+                addLogEntry(`DEBUG v14: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+            } catch (err) { addLogEntry(`DEBUG v14: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error'); permissionsState.orientation = false; }
         } else if ('DeviceOrientationEvent' in window) {
-            permissionsState.orientation = true; // Android ohne explizite Anfrage
-            addLogEntry("DEBUG v13: BERECHTIGUNG: Orientierungssensor (Implizit/Alt) OK.");
-        } else {
-             addLogEntry("BERECHTIGUNG: Orientierungssensor wird nicht unterstützt!", 'error');
-             permissionsState.orientation = false;
-        }
-        addLogEntry("DEBUG v13: Orientierungssensor-Check abgeschlossen.");
+            permissionsState.orientation = true; addLogEntry("DEBUG v14: BERECHTIGUNG: Orientierungssensor (Implizit/Alt) OK.");
+        } else { addLogEntry("BERECHTIGUNG: Orientierungssensor wird nicht unterstützt!", 'error'); permissionsState.orientation = false; }
+        addLogEntry("DEBUG v14: Orientierungssensor-Check abgeschlossen.");
         
         addLogEntry("Phase A: Pre-Flight Check beendet.");
         return permissionsState.gps; 
     }
 
-    // Phase B: Startet alle Logger
+    // Phase B: Startet alle Logger (v14)
     function startAllLoggers() {
-        addLogEntry("Phase B: Starte alle Logger (v13)...");
+        addLogEntry("Phase B: Starte alle Logger (v14)...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
 
-        // 1. GPS-Logger
+        // 1. v14: Anti-Schlaf-Audio STARTEN
+        startAntiSleepAudio();
+        
+        // 2. GPS-Logger
         const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
         geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
         addLogEntry("DEBUG: 'geolocation.watchPosition' Listener angehängt.");
         
-        // 2. Netzwerk-POLLING-Timer
-        if (permissionsState.network) {
-            networkCheckInterval = setInterval(checkNetworkState, NETWORK_POLL_INTERVAL_MS);
-            addLogEntry(`DEBUG: Netzwerk-Polling-Timer gestartet (Intervall: ${NETWORK_POLL_INTERVAL_MS}ms).`);
-            checkNetworkState(true); 
-        }
-
         // 3. Bewegungs-Sensor-Logger
         if (permissionsState.motion) {
             window.addEventListener('devicemotion', logDeviceMotion);
             addLogEntry("DEBUG: 'devicemotion' Listener angehängt.");
-        } else {
-             addLogEntry("WARNUNG: Bewegungssensor-Listener NICHT angehängt (Keine Berechtigung oder Unterstützung).", 'warn');
-        }
+        } else { addLogEntry("WARNUNG: Bewegungssensor-Listener NICHT angehängt.", 'warn'); }
         
         // 4. Orientierungs-Sensor-Logger
         if (permissionsState.orientation) {
             window.addEventListener('deviceorientation', logDeviceOrientation);
             addLogEntry("DEBUG: 'deviceorientation' Listener angehängt.");
-        } else {
-            addLogEntry("WARNUNG: Orientierungssensor-Listener NICHT angehängt (Keine Berechtigung oder Unterstützung).", 'warn');
-        }
+        } else { addLogEntry("WARNUNG: Orientierungssensor-Listener NICHT angehängt.", 'warn'); }
         
         isLogging = true;
         startBtn.disabled = true;
@@ -339,11 +306,11 @@ document.addEventListener("DOMContentLoaded", () => {
         stopBtn.disabled = false;
         crashBtn.disabled = false;
         downloadBtn.disabled = true;
-        fallbackToggle.disabled = true; // v13: Umschalter während des Loggens sperren
+        fallbackToggle.disabled = true;
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (v13) ---
+    // --- BUTTON-HANDLER (v14) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
@@ -352,30 +319,26 @@ document.addEventListener("DOMContentLoaded", () => {
         startBtn.disabled = true; 
         statusEl.textContent = "Prüfe Berechtigungen...";
         logEntries = []; flightRecorderBuffer = []; logAreaEl.value = "";
-        lastNetworkType = ""; 
         permissionsState = { gps: false, motion: false, orientation: false, network: false };
         
         const gpsOk = await requestAllPermissions();
 
         if (gpsOk) {
             statusEl.textContent = "Bereit zum Loggen! (GPS OK)";
-            startBtn.disabled = false; 
-            downloadBtn.disabled = true;
-            permissionBtn.disabled = true; 
-            fallbackToggle.disabled = true; // v13: Umschalter sperren nach erfolgreicher Prüfung
+            startBtn.disabled = false; downloadBtn.disabled = true; permissionBtn.disabled = true; 
+            fallbackToggle.disabled = true; 
         } else {
             statusEl.textContent = "Fehler: GPS-Berechtigung benötigt!";
-            permissionBtn.disabled = false; // Erneut versuchen erlauben
+            permissionBtn.disabled = false; 
         }
     };
 
     // START
     startBtn.onclick = () => {
-        logEntries = []; flightRecorderBuffer = []; logAreaEl.value = "";
+        logEntries = []; flightRecorderBuffer = []; logAreaEl.value = "Starte Logging...\n";
         motionSensorHasFired = false; orientationSensorHasFired = false; 
-        lastNetworkType = ""; 
         
-        addLogEntry(`Logging-Prozess angefordert (v13)...`);
+        addLogEntry(`Logging-Prozess angefordert (v14)...`);
         startAllLoggers();
     };
 
@@ -383,25 +346,26 @@ document.addEventListener("DOMContentLoaded", () => {
     stopBtn.onclick = () => {
         if (!isLogging) return;
         
+        // v14: Anti-Schlaf-Audio STOPPEN
+        stopAntiSleepAudio();
+        
         if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
-        if (networkCheckInterval) clearInterval(networkCheckInterval); 
         
         window.removeEventListener('devicemotion', logDeviceMotion);
         window.removeEventListener('deviceorientation', logDeviceOrientation);
         
         isLogging = false;
         geoWatchId = null;
-        networkCheckInterval = null;
         flightRecorderBuffer = [];
         addLogEntry("Logging gestoppt.");
 
         statusEl.textContent = "Status: Gestoppt. Download bereit.";
         startBtn.disabled = true; 
-        permissionBtn.disabled = false; // Pre-Flight wieder erlauben
+        permissionBtn.disabled = false; 
         stopBtn.disabled = true;
         crashBtn.disabled = true;
         downloadBtn.disabled = false; 
-        fallbackToggle.disabled = false; // v13: Umschalter wieder freigeben
+        fallbackToggle.disabled = false; 
     };
 
     // ABSTURZ MARKIEREN
@@ -418,7 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (logEntries.length === 0) { alert("Keine Logs zum Herunterladen vorhanden."); return; }
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain;charset=utf-8' }); 
-        const filename = `waze_log_v13_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v14_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
@@ -432,3 +396,5 @@ document.addEventListener("DOMContentLoaded", () => {
     crashBtn.disabled = true;
     downloadBtn.disabled = true;
 });
+
+
