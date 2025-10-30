@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Waze Logger v12 (Experimental)</title>
+    <title>Waze Logger v13 (Fallback-Fix)</title>
     <link rel="stylesheet" href="style.css">
     <!-- WICHTIG: Debugger MUSS ZUERST geladen werden -->
     <script src="debugger.js" defer></script>
@@ -11,12 +11,14 @@
 </head>
 <body>
     <div class="container">
-        <h1>Waze Korrelations-Logger v12</h1>
-        <p class="subtitle">(Mit Experimental Features)</p>
+        <h1>Waze Korrelations-Logger v13</h1>
+        <p class="subtitle">(Mit "Not-Aus" Fallback-Schalter)</p>
 
-        <!-- v12: Warnhinweis für Flags -->
-        <div class="flag-warning">
-            <strong>Experimentell!</strong> Für volle Funktionalität (neue Sensoren, CPU-Last) müssen eventuell Flags in <code>chrome://flags</code> aktiviert werden (z.B. <code>#enable-generic-sensor</code>, <code>#enable-generic-sensor-extra-classes</code>, <code>#enable-compute-pressure</code>). Ohne Flags nutzt die App die Standard-Sensoren. Benutzung auf eigene Gefahr!
+        <!-- v13: Neuer Fallback-Umschalter -->
+        <div class="toggle-group">
+            <input type="checkbox" id="fallbackToggle">
+            <label for="fallbackToggle">Alte Sensor-API erzwingen (Fallback)</label>
+            <p>Wenn die App bei "Pre-Flight Check" einfriert, diese Box anhaken und neu laden.</p>
         </div>
 
         <div id="status">Status: Initialisiert...</div>
