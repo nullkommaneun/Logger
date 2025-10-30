@@ -3,18 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Waze Logger v13 (Fallback-Fix)</title>
+    <title>Waze Logger v14 (Netz-Wächter)</title>
     <link rel="stylesheet" href="style.css">
-    <!-- WICHTIG: Debugger MUSS ZUERST geladen werden -->
     <script src="debugger.js" defer></script>
     <script src="app.js" defer></script>
 </head>
 <body>
     <div class="container">
-        <h1>Waze Korrelations-Logger v13</h1>
-        <p class="subtitle">(Mit "Not-Aus" Fallback-Schalter)</p>
+        <h1>Waze Korrelations-Logger v14</h1>
+        <p class="subtitle">("Netzwerk-Wächter" Edition)</p>
 
-        <!-- v13: Neuer Fallback-Umschalter -->
+        <!-- v14: Das neue Live-Dashboard -->
+        <div id="liveDashboard" class="dashboard-offline">
+            <div id="networkStatus">SUCHE...</div>
+        </div>
+
         <div class="toggle-group">
             <input type="checkbox" id="fallbackToggle">
             <label for="fallbackToggle">Alte Sensor-API erzwingen (Fallback)</label>
