@@ -3,19 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Waze Logger v14 (Netz-Wächter)</title>
+    <title>Waze Logger v16 (Live Charts)</title>
     <link rel="stylesheet" href="style.css">
+    
+    <!-- *** NEU v16: Chart.js Bibliothek laden *** -->
+    <!-- Wir laden sie über ein CDN (Cloudflare) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" xintegrity="sha512-CQfn+dLI8J9agGGlBCRxCgbIYL3wTQdH8TLpVtlYaaBk6LgwP4D2VvoaQLL/lCMl3MvK_2unb9sFLNSSADqK1w==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+    <!-- WICHTIG: Unsere Skripte MÜSSEN *danach* geladen werden -->
     <script src="debugger.js" defer></script>
     <script src="app.js" defer></script>
 </head>
 <body>
     <div class="container">
-        <h1>Waze Korrelations-Logger v14</h1>
-        <p class="subtitle">("Netzwerk-Wächter" Edition)</p>
+        <h1>Waze Logger v16</h1>
+        <p class="subtitle">("Live Diagnose-Dashboard")</p>
 
-        <!-- v14: Das neue Live-Dashboard -->
-        <div id="liveDashboard" class="dashboard-offline">
-            <div id="networkStatus">SUCHE...</div>
+        <!-- v14: Das Live-Dashboard -->
+        <div id="liveDashboard" class="dashboard-unknown">
+            <div id="networkStatus">BEREIT</div>
+        </div>
+        
+        <!-- *** NEU v16: Live-Chart-Container *** -->
+        <div class="chart-container-wrapper">
+            <div class="chart-container">
+                <label for="gpsChart">Live: GPS-Genauigkeit (m) & G-Kraft (m/s²)</label>
+                <canvas id="gpsChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <label for="orientationChart">Live: Fahrzeug-Lage (Beta/Gamma)</label>
+                <canvas id="orientationChart"></canvas>
+            </div>
         </div>
 
         <div class="toggle-group">
