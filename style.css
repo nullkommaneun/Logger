@@ -1,4 +1,5 @@
-/* Waze Korrelations-Logger Stile - v14 */
+/* Waze Korrelations-Logger Stile - v15 */
+/* (Basiert auf v14-Entwurf) */
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
@@ -29,7 +30,7 @@ h1 {
     color: #a0a0a0;
 }
 
-/* v14: Live-Dashboard-Stile */
+/* v14/v15: Live-Dashboard-Stile */
 #liveDashboard {
     padding: 20px;
     border-radius: 8px;
@@ -39,7 +40,7 @@ h1 {
 }
 
 #networkStatus {
-    font-size: 1.8em; /* Größer */
+    font-size: 1.8em;
     font-weight: bold;
     color: #ffffff;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
