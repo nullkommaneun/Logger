@@ -1,10 +1,8 @@
 /*
- * Waze Korrelations-Logger - System-Debugger v5
+ * Waze Korrelations-Logger - System-Debugger v6
  * =============================================
  *
- * v5 fügt einen Check für die WebRTC-API hinzu,
- * die wir für den "IP-Sniffer"-Hack in app.js v15
- * benötigen.
+ * v6 fügt einen Check für die Chart.js-Bibliothek hinzu.
  *
  * Lädt zuerst, prüft Systemvoraussetzungen und fängt globale Fehler.
  */
@@ -33,10 +31,10 @@
         }
 
         window.logDebug = logDebug; // Global verfügbar machen für app.js
-        logDebug(`Debugger v5 initialisiert...`);
+        logDebug(`Debugger v6 initialisiert...`);
 
         // --- System-Check ---
-        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v5 ---");
+        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v6 ---");
 
         if (window.location.protocol !== "https:") {
             logDebug("SYSTEM-CHECK: HTTPS ... FEHLER! Viele APIs benötigen HTTPS.", 'error');
@@ -61,23 +59,24 @@
             }
         };
 
+        // *** NEU v16: Chart.js Check ***
+        checkApi('Chart.js (Externe Lib)', () => typeof Chart !== 'undefined');
+        
         checkApi('Geolocation', () => 'geolocation' in navigator);
         checkApi('MediaDevices (Audio/BT)', () => 'mediaDevices' in navigator && 'enumerateDevices' in navigator.mediaDevices);
         checkApi('NetworkInformation (Netzwerk-Typ)', () => 'connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator);
-        
-        // v15: WebRTC-Check
         checkApi('WebRTC (IP-Sniffer)', () => 'RTCPeerConnection' in window || 'webkitRTCPeerConnection' in window);
 
         // Alte Sensor APIs
         checkApi('DeviceMotionEvent (Bewegung - Alt)', () => 'DeviceMotionEvent' in window);
         checkApi('DeviceOrientationEvent (Ausrichtung - Alt)', () => 'DeviceOrientationEvent' in window);
 
-        // Permission-Checks für alte APIs (iOS/Modern Android)
+        // Permission-Checks
         if (typeof DeviceMotionEvent.requestPermission === 'function') {
-            logDebug("SYSTEM-CHECK: 'requestPermission' Motion-API (Alt) ... GEFUNDEN (Erweiterte Sicherheit)");
+            logDebug("SYSTEM-CHECK: 'requestPermission' Motion-API ... GEFUNDEN (Erweiterte Sicherheit)");
         }
         if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-            logDebug("SYSTEM-CHECK: 'requestPermission' Orientation-API (Alt) ... GEFUNDEN (Erweiterte Sicherheit)");
+            logDebug("SYSTEM-CHECK: 'requestPermission' Orientation-API ... GEFUNDEN (Erweiterte Sicherheit)");
         }
         
         logDebug("--- SYSTEM-CHECK BEENDET ---");
