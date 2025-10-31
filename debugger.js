@@ -1,11 +1,10 @@
 /*
- * Waze Korrelations-Logger - System-Debugger v4
+ * Waze Korrelations-Logger - System-Debugger v5
  * =============================================
  *
- * HINWEIS: Dies ist eine bereinigte Version von v3.
- * Alle Checks für v12 (Experimental Flags) wurden
- * wieder entfernt, da sie nicht verfügbar sind.
- * Wir konzentrieren uns auf die stabilen APIs.
+ * v5 fügt einen Check für die WebRTC-API hinzu,
+ * die wir für den "IP-Sniffer"-Hack in app.js v15
+ * benötigen.
  *
  * Lädt zuerst, prüft Systemvoraussetzungen und fängt globale Fehler.
  */
@@ -34,10 +33,10 @@
         }
 
         window.logDebug = logDebug; // Global verfügbar machen für app.js
-        logDebug(`Debugger v4 initialisiert...`);
+        logDebug(`Debugger v5 initialisiert...`);
 
         // --- System-Check ---
-        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v4 ---");
+        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v5 ---");
 
         if (window.location.protocol !== "https:") {
             logDebug("SYSTEM-CHECK: HTTPS ... FEHLER! Viele APIs benötigen HTTPS.", 'error');
@@ -65,6 +64,9 @@
         checkApi('Geolocation', () => 'geolocation' in navigator);
         checkApi('MediaDevices (Audio/BT)', () => 'mediaDevices' in navigator && 'enumerateDevices' in navigator.mediaDevices);
         checkApi('NetworkInformation (Netzwerk-Typ)', () => 'connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator);
+        
+        // v15: WebRTC-Check
+        checkApi('WebRTC (IP-Sniffer)', () => 'RTCPeerConnection' in window || 'webkitRTCPeerConnection' in window);
 
         // Alte Sensor APIs
         checkApi('DeviceMotionEvent (Bewegung - Alt)', () => 'DeviceMotionEvent' in window);
