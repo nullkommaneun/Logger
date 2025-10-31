@@ -1,24 +1,17 @@
 /*
- * Waze Korrelations-Logger - v15 "IP-Sniffer" + Screen-Lock
- * =========================================================
+ * Waze Korrelations-Logger - v16 "Live Diagnose-Dashboard"
+ * ========================================================
  *
- * ANALYSE v13 vs v14 LOGS:
- * 1. BEWEIS: v13 (ohne Hack) hat eine 3-Minuten-Lücke.
- * 2. BEWEIS: v14 (mit Hack) hat KEINE Lücke.
- * 3. FAZIT: Der "Anti-Schlaf-Hack" (v14) ist ESSENTIELL
- * und bildet die neue, stabile Basis.
- * 4. BEWEIS: Der "Netzwerk-Spion" (v13) ist BLIND.
+ * BASIS: v15 (Stabiler "Anti-Schlaf-Hack" + "IP-Sniffer")
  *
- * PLAN v15:
- * 1. BEHALTE "Anti-Schlaf-Hack" (v14) für Stabilität.
- * 2. BEHALTE "Netzwerk-Wächter" (v14 Dashboard)
- * (als visuelles Feedback, auch wenn er "cellular" anzeigt).
- * 3. HINZUFÜGEN: "IP-Sniffer" (v15), um das letzte
- * Schwarze Loch (AA-Verbindung) zu finden.
- *
- * NEUES FEATURE (DEINE IDEE):
- * 4. HINZUFÜGEN: `screen.orientation.lock('portrait')`
- * beim "START"-Klick, um das nervige Drehen zu verhindern.
+ * NEU in v16 (Deine Idee):
+ * 1. Lädt extern Chart.js (siehe index.html).
+ * 2. Initialisiert zwei Live-Charts beim START:
+ * a) gpsChart: Zeigt GPS-Genauigkeit (Acc) und G-Kraft (Jolt).
+ * b) orientationChart: Zeigt die Handy-Ausrichtung (Beta/Gamma).
+ * 3. Die Sensor-Handler (logPosition, logDeviceMotion) füttern
+ * jetzt *auch* diese Live-Charts.
+ * 4. STOP-Button zerstört die Charts, um Speicher freizugeben.
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -37,12 +30,20 @@ document.addEventListener("DOMContentLoaded", () => {
     const fallbackToggle = document.getElementById('fallbackToggle');
     const liveDashboard = document.getElementById('liveDashboard');
     const networkStatusEl = document.getElementById('networkStatus');
+    
+    // --- v16: Chart-Kontexte ---
+    const gpsChartCtx = document.getElementById('gpsChart')?.getContext('2d');
+    const orientationChartCtx = document.getElementById('orientationChart')?.getContext('2d');
+    let gpsChart = null;
+    let orientationChart = null;
+    const CHART_MAX_DATA_POINTS = 50; // Nur die letzten 50 Punkte anzeigen
 
     // --- Logger-Status ---
     let isLogging = false;
     let logEntries = [];
     let geoWatchId = null;
     let permissionsState = { gps: false, motion: false, orientation: false, network: false, webrtc: false };
+    let v16_chartErrorLogged = false; // Verhindert Log-Spam
 
     // --- v14: Anti-Schlaf-Audio-Kontext ---
     let antiSleepContext = null;
@@ -71,9 +72,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let lastJoltTime = 0;
 
     // --- Hilfsfunktion: Delay ---
-    function delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+    function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
     // --- Universal-Funktion zum Loggen (ins Haupt-Log) ---
     function getTimestamp() { return new Date().toISOString(); }
@@ -118,16 +117,110 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- SENSOR-HANDLER (v15) ---
+    // --- v16: CHART-FUNKTIONEN ---
     // ===================================
 
-    // 1. GPS-Erfolg
+    // Globale Chart-Stil-Optionen
+    Chart.defaults.color = '#e0e0e0';
+    Chart.defaults.borderColor = '#444';
+
+    function initCharts() {
+        if (typeof Chart === 'undefined') {
+            if (!v16_chartErrorLogged) {
+                addLogEntry("FEHLER: Chart.js (Chart) ist nicht definiert. Stelle sicher, dass die Bibliothek geladen wird.", 'error');
+                v16_chartErrorLogged = true;
+            }
+            return; 
+        }
+        
+        // --- GPS- & G-Kraft-Chart ---
+        if (gpsChartCtx) {
+            gpsChart = new Chart(gpsChartCtx, {
+                type: 'line',
+                data: { labels: [], datasets: [
+                    { label: 'GPS Genauigkeit (m)', data: [], borderColor: '#03a9f4', backgroundColor: 'rgba(3, 169, 244, 0.3)', fill: false, tension: 0.1, yAxisID: 'yGps' },
+                    { label: 'G-Kraft (m/s²)', data: [], borderColor: '#f44336', backgroundColor: 'rgba(244, 67, 54, 0.3)', fill: false, tension: 0.1, yAxisID: 'yGforce' }
+                ]},
+                options: {
+                    scales: {
+                        x: { display: false },
+                        yGps: { type: 'linear', position: 'left', title: { display: true, text: 'GPS (m)' }, ticks: { color: '#03a9f4' } },
+                        yGforce: { type: 'linear', position: 'right', title: { display: true, text: 'G-Kraft' }, ticks: { color: '#f44336' }, grid: { drawOnChartArea: false } }
+                    },
+                    animation: { duration: 200 },
+                    maintainAspectRatio: false
+                }
+            });
+        }
+        
+        // --- Orientierungs-Chart ---
+        if (orientationChartCtx) {
+            orientationChart = new Chart(orientationChartCtx, {
+                type: 'bar',
+                data: { labels: ['Neigung (X)', 'Seitenneigung (Y)'], datasets: [
+                    { label: 'Grad', data: [0, 0], backgroundColor: ['#bb86fc', '#03dac6'], borderWidth: 1 }
+                ]},
+                options: {
+                    indexAxis: 'y',
+                    scales: { x: { min: -180, max: 180 }, y: { display: false } },
+                    animation: { duration: 0 },
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+    }
+
+    // Zerstört Charts beim Stoppen
+    function destroyCharts() {
+        if (gpsChart) { gpsChart.destroy(); gpsChart = null; }
+        if (orientationChart) { orientationChart.destroy(); orientationChart = null; }
+    }
+
+    // Fügt Daten zu einem Chart hinzu und hält ihn auf 50 Punkte
+    function addDataToChart(chart, label, dataArray) {
+        if (!chart) return;
+        
+        chart.data.labels.push(label);
+        dataArray.forEach((value, index) => {
+            chart.data.datasets[index].data.push(value);
+        });
+
+        if (chart.data.labels.length > CHART_MAX_DATA_POINTS) {
+            chart.data.labels.shift();
+            chart.data.datasets.forEach(dataset => {
+                dataset.data.shift();
+            });
+        }
+        chart.update();
+    }
+    
+    // Aktualisiert die Balken des Orientierungs-Charts
+    function updateBarChart(chart, dataArray) {
+        if (!chart) return;
+        chart.data.datasets[0].data = dataArray;
+        chart.update();
+    }
+
+
+    // ===================================
+    // --- SENSOR-HANDLER (v16) ---
+    // ===================================
+
+    // 1. GPS-Erfolg (v16: füttert jetzt Chart)
     function logPosition(position) { 
         const coords = position.coords;
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
-        const logData = [ `GPS-OK | Acc: ${coords.accuracy.toFixed(1)}m`, `Speed: ${speedKmh} km/h` ];
+        const accuracy = coords.accuracy.toFixed(1);
+        
+        // Loggen
+        const logData = [ `GPS-OK | Acc: ${accuracy}m`, `Speed: ${speedKmh} km/h` ];
         addLogEntry(logData.join(' | '));
-        statusEl.textContent = `LOGGING... (GPS: ${coords.accuracy.toFixed(1)}m)`;
+        statusEl.textContent = `LOGGING... (GPS: ${accuracy}m)`;
+        
+        // v16: Chart füttern (nur GPS-Teil)
+        const timeLabel = getTimestamp().slice(11, 19);
+        addDataToChart(gpsChart, timeLabel, [accuracy, null]); // null für G-Kraft
      }
 
     // 2. GPS-Fehler
@@ -145,6 +238,7 @@ document.addEventListener("DOMContentLoaded", () => {
     
     // 3. v14: Netzwerk-Wächter (Polling-Funktion - Zange 1)
     function checkNetworkState(isInitialCall = false) {
+        // (Identisch zu v15)
         if (!permissionsState.network) return; 
         try {
             const isOnline = navigator.onLine;
@@ -153,7 +247,6 @@ document.addEventListener("DOMContentLoaded", () => {
             else { const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
                 currentType = connection ? connection.type : 'cellular'; }
             
-            // Dashboard-Logik
             if (currentType === 'offline') {
                 liveDashboard.className = 'dashboard-offline'; networkStatusEl.textContent = 'STATUS: OFFLINE';
             } else if (currentType === 'wifi') {
@@ -164,7 +257,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 liveDashboard.className = 'dashboard-unknown'; networkStatusEl.textContent = `NETZ: ${currentType.toUpperCase()}`;
             }
 
-            // Log-File-Logik (nur bei Änderung)
             if (currentType !== lastNetworkType || isOnline !== lastOnlineStatus || isInitialCall) {
                 const logString = `NETZWERK-STATUS: Online: ${isOnline} | Typ: ${currentType}`;
                 if (isInitialCall) { addLogEntry(logString, 'info'); }
@@ -180,22 +272,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 4. v15: IP-Sniffer (Polling-Funktion - Zange 2)
     function checkLocalIP() {
+        // (Identisch zu v15)
         if (!permissionsState.webrtc) return;
-
         try {
             if (rtcPeerConnection) { rtcPeerConnection.close(); rtcPeerConnection = null; }
-
             const PeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
             const rtc = new PeerConnection({ iceServers: [] });
             rtcPeerConnection = rtc;
-            
             rtc.createDataChannel(''); 
-            
             rtc.onicecandidate = (event) => {
                 if (event.candidate && event.candidate.candidate) {
                     const ipRegex = /(192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3})/g;
                     const match = ipRegex.exec(event.candidate.candidate);
-                    
                     if (match) {
                         const newLocalIP = match[0];
                         if (newLocalIP !== lastLocalIP) {
@@ -206,11 +294,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 }
             };
-            
             rtc.createOffer()
                 .then(offer => rtc.setLocalDescription(offer))
                 .catch(err => addLogEntry(`IP-SNIFFER: Fehler beim Erstellen des Offers: ${err.message}`, 'error'));
-
         } catch (err) {
             addLogEntry(`IP-SNIFFER: Kritischer Fehler: ${err.message}`, 'error');
             permissionsState.webrtc = false; 
@@ -218,9 +304,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 5. Bewegungssensor
+    // 5. Bewegungssensor (v16: füttert jetzt Chart)
     function logDeviceMotion(event) {
-        // (Identisch zu v14)
         const now = Date.now();
         const acc = event.accelerationIncludingGravity;
         if (!motionSensorHasFired) {
@@ -229,9 +314,19 @@ document.addEventListener("DOMContentLoaded", () => {
             else { addLogEntry("DEBUG: 'devicemotion' feuert erfolgreich mit Daten.", 'info'); }
         }
         if (!acc || acc.x === null) return; 
+        
+        // Flugschreiber füttern
         const dataString = `X: ${acc.x.toFixed(2)} | Y: ${acc.y.toFixed(2)} | Z: ${acc.z.toFixed(2)}`;
         pushToFlightRecorder(now, 'MOTION', dataString);
+        
+        // G-Kraft berechnen
         const gForce = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+        
+        // v16: Chart füttern (nur G-Kraft-Teil)
+        const timeLabel = getTimestamp().slice(11, 19);
+        addDataToChart(gpsChart, timeLabel, [null, gForce]); // null für GPS
+        
+        // Jolt-Detection
         if (gForce > JOLT_THRESHOLD_MS2 && (now - lastJoltTime > JOLT_COOLDOWN_MS)) {
             lastJoltTime = now;
             const reason = `HARTER STOSS ERKANNT (G-Force: ${gForce.toFixed(1)})`;
@@ -239,9 +334,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 6. Orientierungssensor
+    // 6. Orientierungssensor (v16: füttert jetzt Chart)
     function logDeviceOrientation(event) {
-        // (Identisch zu v14)
         const now = Date.now();
         if (!orientationSensorHasFired) {
             orientationSensorHasFired = true;
@@ -249,12 +343,18 @@ document.addEventListener("DOMContentLoaded", () => {
             else { addLogEntry("DEBUG: 'deviceorientation' feuert erfolgreich mit Daten.", 'info'); }
         }
         if (event.alpha === null) return;
+        
+        // Flugschreiber füttern
         const dataString = `Alpha(Z): ${event.alpha.toFixed(1)} | Beta(X): ${event.beta.toFixed(1)} | Gamma(Y): ${event.gamma.toFixed(1)}`;
         pushToFlightRecorder(now, 'ORIENTATION', dataString);
+        
+        // v16: Chart füttern
+        updateBarChart(orientationChart, [event.beta.toFixed(1), event.gamma.toFixed(1)]);
     }
     
     // 7. v14: Anti-Schlaf-Hack (Stilles Audio)
     function startAntiSleepAudio() {
+        // (Identisch zu v15)
         try {
             if (antiSleepContext) { antiSleepContext.close(); } 
             antiSleepContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -268,6 +368,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (e) { addLogEntry(`FEHLER: 'Anti-Schlaf-Hack' konnte nicht gestartet werden: ${e.message}`, 'error'); }
     }
     function stopAntiSleepAudio() {
+         // (Identisch zu v15)
          try {
             if (antiSleepOscillator) { antiSleepOscillator.stop(); antiSleepOscillator = null; }
             if (antiSleepContext) { antiSleepContext.close(); antiSleepContext = null; }
@@ -276,124 +377,117 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v15) ---
+    // --- STEUERUNGS-FUNKTIONEN (v16) ---
     // ===================================
 
-    // Phase A: Pre-Flight Check (v15)
+    // Phase A: Pre-Flight Check (Identisch zu v15)
     async function requestAllPermissions() {
-        addLogEntry("Phase A: Fordere Berechtigungen an (v15)...");
+        // (Identisch zu v15)
+        addLogEntry("Phase A: Fordere Berechtigungen an (v16)...");
         statusEl.textContent = "Berechtigungen anfordern...";
         const useFallback = fallbackToggle.checked;
-        if (useFallback) { addLogEntry("DEBUG v15: 'Alte API erzwingen' ist AKTIV. Überspringe 'requestPermission'.", 'warn'); }
-
-        // --- GPS ---
-        addLogEntry("DEBUG v15: Fordere GPS an...");
+        if (useFallback) { addLogEntry("DEBUG v16: 'Alte API erzwingen' ist AKTIV. Überspringe 'requestPermission'.", 'warn'); }
+        
+        addLogEntry("DEBUG v16: Fordere GPS an...");
         try {
             if (!navigator.geolocation) throw new Error("Geolocation wird nicht unterstützt.");
             await new Promise((resolve, reject) => { navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 }); });
-            permissionsState.gps = true; addLogEntry("DEBUG v15: BERECHTIGUNG: GPS erteilt.");
+            permissionsState.gps = true; addLogEntry("DEBUG v16: BERECHTIGUNG: GPS erteilt.");
         } catch (err) { addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error'); permissionsState.gps = false; }
-        addLogEntry("DEBUG v15: GPS-Anfrage abgeschlossen.");
+        addLogEntry("DEBUG v16: GPS-Anfrage abgeschlossen.");
 
-        // --- Netzwerk (v14-Stil) ---
-        addLogEntry("DEBUG v15: Prüfe Netzwerk-API...");
+        addLogEntry("DEBUG v16: Prüfe Netzwerk-API...");
         if ('connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator) {
-            permissionsState.network = true; addLogEntry("DEBUG v15: BERECHTIGUNG: Netzwerk-API gefunden.");
+            permissionsState.network = true; addLogEntry("DEBUG v16: BERECHTIGUNG: Netzwerk-API gefunden.");
         } else { addLogEntry("BERECHTIGUNG: Netzwerk-API wird nicht unterstützt!", 'warn'); }
 
-        // --- WebRTC (v15-Stil) ---
-        addLogEntry("DEBUG v15: Prüfe WebRTC-API (IP-Sniffer)...");
+        addLogEntry("DEBUG v16: Prüfe WebRTC-API (IP-Sniffer)...");
         if ('RTCPeerConnection' in window || 'webkitRTCPeerConnection' in window) {
-            permissionsState.webrtc = true; addLogEntry("DEBUG v15: BERECHTIGUNG: WebRTC-API gefunden.");
+            permissionsState.webrtc = true; addLogEntry("DEBUG v16: BERECHTIGUNG: WebRTC-API gefunden.");
         } else { addLogEntry("BERECHTIGUNG: WebRTC-API wird nicht unterstützt!", 'warn'); }
-        addLogEntry("DEBUG v15: Netzwerk-Checks abgeschlossen.");
+        addLogEntry("DEBUG v16: Netzwerk-Checks abgeschlossen.");
         
-        // --- Bewegung ---
-        addLogEntry("DEBUG v15: Prüfe Bewegungssensor...");
+        addLogEntry("DEBUG v16: Prüfe Bewegungssensor...");
         if (useFallback) {
-            permissionsState.motion = true; addLogEntry("DEBUG v15: BERECHTIGUNG: Bewegungssensor (Fallback erzwungen) OK.");
+            permissionsState.motion = true; addLogEntry("DEBUG v16: BERECHTIGUNG: Bewegungssensor (Fallback erzwungen) OK.");
         } else if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
-            addLogEntry("DEBUG v15: 'requestPermission' Motion-API erkannt, fordere an...");
+            addLogEntry("DEBUG v16: 'requestPermission' Motion-API erkannt, fordere an...");
             try {
                 const state = await DeviceMotionEvent.requestPermission();
                 permissionsState.motion = (state === 'granted');
-                addLogEntry(`DEBUG v15: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
-            } catch (err) { addLogEntry(`DEBUG v15: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error'); permissionsState.motion = false; }
+                addLogEntry(`DEBUG v16: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+            } catch (err) { addLogEntry(`DEBUG v16: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error'); permissionsState.motion = false; }
         } else if ('DeviceMotionEvent' in window) {
-             permissionsState.motion = true; addLogEntry("DEBUG v15: BERECHTIGUNG: Bewegungssensor (Implizit/Alt) OK.");
+             permissionsState.motion = true; addLogEntry("DEBUG v16: BERECHTIGUNG: Bewegungssensor (Implizit/Alt) OK.");
         } else { addLogEntry("BERECHTIGUNG: Bewegungssensor wird nicht unterstützt!", 'error'); permissionsState.motion = false; }
-        addLogEntry("DEBUG v15: Bewegungssensor-Check abgeschlossen.");
+        addLogEntry("DEBUG v16: Bewegungssensor-Check abgeschlossen.");
 
-        // --- Orientierung ---
-        addLogEntry("DEBUG v15: Füge kleine Pause ein (500ms)..."); await delay(500); 
-        addLogEntry("DEBUG v15: Prüfe Orientierungssensor...");
+        addLogEntry("DEBUG v16: Füge kleine Pause ein (500ms)..."); await delay(500); 
+        addLogEntry("DEBUG v16: Prüfe Orientierungssensor...");
         if (useFallback) {
-             permissionsState.orientation = true; addLogEntry("DEBUG v15: BERECHTIGUNG: Orientierungssensor (Fallback erzwungen) OK.");
+             permissionsState.orientation = true; addLogEntry("DEBUG v16: BERECHTIGUNG: Orientierungssensor (Fallback erzwungen) OK.");
         } else if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
-             addLogEntry("DEBUG v15: 'requestPermission' Orientation-API erkannt, fordere an...");
+             addLogEntry("DEBUG v16: 'requestPermission' Orientation-API erkannt, fordere an...");
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
                 permissionsState.orientation = (state === 'granted');
-                addLogEntry(`DEBUG v15: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
-            } catch (err) { addLogEntry(`DEBUG v15: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error'); permissionsState.orientation = false; }
+                addLogEntry(`DEBUG v16: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+            } catch (err) { addLogEntry(`DEBUG v16: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error'); permissionsState.orientation = false; }
         } else if ('DeviceOrientationEvent' in window) {
-            permissionsState.orientation = true; addLogEntry("DEBUG v15: BERECHTIGUNG: Orientierungssensor (Implizit/Alt) OK.");
+            permissionsState.orientation = true; addLogEntry("DEBUG v1f: BERECHTIGUNG: Orientierungssensor (Implizit/Alt) OK.");
         } else { addLogEntry("BERECHTIGUNG: Orientierungssensor wird nicht unterstützt!", 'error'); permissionsState.orientation = false; }
-        addLogEntry("DEBUG v15: Orientierungssensor-Check abgeschlossen.");
+        addLogEntry("DEBUG v16: Orientierungssensor-Check abgeschlossen.");
         
         addLogEntry("Phase A: Pre-Flight Check beendet.");
         return permissionsState.gps; 
     }
 
-    // Phase B: Startet alle Logger (v15)
+    // Phase B: Startet alle Logger (v16)
     async function startAllLoggers() {
-        addLogEntry("Phase B: Starte alle Logger (v15)...");
+        addLogEntry("Phase B: Starte alle Logger (v16)...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
 
-        // --- NEUES FEATURE: Display sperren ---
+        // 1. Display sperren
         addLogEntry("DEBUG: Versuche, Display-Rotation zu sperren ('portrait')...");
         try {
             if (screen.orientation && typeof screen.orientation.lock === 'function') {
                 await screen.orientation.lock('portrait-primary');
                 addLogEntry("DEBUG: Display-Rotation erfolgreich auf 'portrait' gesperrt.", 'info');
-            } else {
-                addLogEntry("DEBUG: 'screen.orientation.lock' API nicht gefunden.", 'warn');
-            }
-        } catch (err) {
-            // Das ist ein 'NotAllowedError', wenn der User es im OS blockiert hat. Kein Problem.
-            addLogEntry(`DEBUG: Display-Rotation konnte nicht gesperrt werden: ${err.message}`, 'warn');
-        }
-        // --- Ende neues Feature ---
+            } else { addLogEntry("DEBUG: 'screen.orientation.lock' API nicht gefunden.", 'warn'); }
+        } catch (err) { addLogEntry(`DEBUG: Display-Rotation konnte nicht gesperrt werden: ${err.message}`, 'warn'); }
 
-        // 1. Anti-Schlaf-Audio STARTEN
+        // 2. Anti-Schlaf-Audio STARTEN
         startAntiSleepAudio();
         
-        // 2. GPS-Logger
+        // 3. v16: Charts initialisieren
+        initCharts();
+        
+        // 4. GPS-Logger
         const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 };
         geoWatchId = navigator.geolocation.watchPosition(logPosition, logError, geoOptions);
         addLogEntry("DEBUG: 'geolocation.watchPosition' Listener angehängt.");
         
-        // 3. Netzwerk-Wächter (Zange 1)
+        // 5. Netzwerk-Wächter (Zange 1)
         if (permissionsState.network) {
             networkCheckInterval = setInterval(checkNetworkState, NETWORK_POLL_INTERVAL_MS);
             addLogEntry(`DEBUG: Netzwerk-Wächter (Typ) Polling gestartet (Intervall: ${NETWORK_POLL_INTERVAL_MS}ms).`);
             checkNetworkState(true); 
         }
         
-        // 4. IP-Sniffer (Zange 2)
+        // 6. IP-Sniffer (Zange 2)
         if (permissionsState.webrtc) {
             ipSnifferInterval = setInterval(checkLocalIP, IP_SNIFFER_INTERVAL_MS);
             addLogEntry(`DEBUG: IP-Sniffer (WebRTC) Polling gestartet (Intervall: ${IP_SNIFFER_INTERVAL_MS}ms).`);
             checkLocalIP(); 
         }
 
-        // 5. Bewegungs-Sensor-Logger
+        // 7. Bewegungs-Sensor-Logger
         if (permissionsState.motion) {
             window.addEventListener('devicemotion', logDeviceMotion);
             addLogEntry("DEBUG: 'devicemotion' Listener angehängt.");
         } else { addLogEntry("WARNUNG: Bewegungssensor-Listener NICHT angehängt.", 'warn'); }
         
-        // 6. Orientierungs-Sensor-Logger
+        // 8. Orientierungs-Sensor-Logger
         if (permissionsState.orientation) {
             window.addEventListener('deviceorientation', logDeviceOrientation);
             addLogEntry("DEBUG: 'deviceorientation' Listener angehängt.");
@@ -406,7 +500,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (v15) ---
+    // --- BUTTON-HANDLER (v16) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
@@ -416,6 +510,7 @@ document.addEventListener("DOMContentLoaded", () => {
         logEntries = []; flightRecorderBuffer = []; logAreaEl.value = "";
         lastNetworkType = "unknown"; lastOnlineStatus = navigator.onLine; lastLocalIP = "";
         permissionsState = { gps: false, motion: false, orientation: false, network: false, webrtc: false };
+        v16_chartErrorLogged = false;
         
         const gpsOk = await requestAllPermissions();
 
@@ -435,7 +530,7 @@ document.addEventListener("DOMContentLoaded", () => {
         motionSensorHasFired = false; orientationSensorHasFired = false; 
         lastNetworkType = "unknown"; lastOnlineStatus = navigator.onLine; lastLocalIP = "";
         
-        addLogEntry(`Logging-Prozess angefordert (v15)...`);
+        addLogEntry(`Logging-Prozess angefordert (v16)...`);
         startAllLoggers();
     };
 
@@ -453,16 +548,16 @@ document.addEventListener("DOMContentLoaded", () => {
         window.removeEventListener('devicemotion', logDeviceMotion);
         window.removeEventListener('deviceorientation', logDeviceOrientation);
         
-        // --- NEU: Display-Rotation wieder freigeben ---
+        // v16: Charts zerstören
+        destroyCharts();
+        
+        // Display-Rotation wieder freigeben
         try {
              if (screen.orientation && typeof screen.orientation.unlock === 'function') {
                 screen.orientation.unlock();
                 addLogEntry("DEBUG: Display-Rotation wieder freigegeben.", 'info');
              }
-        } catch (err) {
-            addLogEntry(`DEBUG: Fehler beim Freigeben der Display-Rotation: ${err.message}`, 'warn');
-        }
-        // --- Ende ---
+        } catch (err) { addLogEntry(`DEBUG: Fehler beim Freigeben der Display-Rotation: ${err.message}`, 'warn'); }
         
         isLogging = false;
         geoWatchId = null; networkCheckInterval = null; ipSnifferInterval = null;
@@ -495,7 +590,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (logEntries.length === 0) { alert("Keine Logs zum Herunterladen vorhanden."); return; }
         const logData = logEntries.join('\n');
         const blob = new Blob([logData], { type: 'text/plain;charset=utf-8' }); 
-        const filename = `waze_log_v15_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v16_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
