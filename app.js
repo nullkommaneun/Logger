@@ -1,26 +1,24 @@
 /*
- * Waze Korrelations-Logger - v15 "IP-Sniffer"
- * =============================================
+ * Waze Korrelations-Logger - v15 "IP-Sniffer" + Screen-Lock
+ * =========================================================
  *
- * BASIS: v14 (Stabiler "Anti-Schlaf-Hack")
+ * ANALYSE v13 vs v14 LOGS:
+ * 1. BEWEIS: v13 (ohne Hack) hat eine 3-Minuten-Lücke.
+ * 2. BEWEIS: v14 (mit Hack) hat KEINE Lücke.
+ * 3. FAZIT: Der "Anti-Schlaf-Hack" (v14) ist ESSENTIELL
+ * und bildet die neue, stabile Basis.
+ * 4. BEWEIS: Der "Netzwerk-Spion" (v13) ist BLIND.
  *
- * PROBLEM: Der "Netzwerk-Wächter" (v10/v13/v14) ist blind für
- * die Wi-Fi-Direct-Verbindung von AA. Er meldet
- * "cellular", obwohl AA verbunden ist.
+ * PLAN v15:
+ * 1. BEHALTE "Anti-Schlaf-Hack" (v14) für Stabilität.
+ * 2. BEHALTE "Netzwerk-Wächter" (v14 Dashboard)
+ * (als visuelles Feedback, auch wenn er "cellular" anzeigt).
+ * 3. HINZUFÜGEN: "IP-Sniffer" (v15), um das letzte
+ * Schwarze Loch (AA-Verbindung) zu finden.
  *
- * NEU in v15:
- * 1. Wir starten ZWEI Polling-Timer:
- * a) Der `NetworkInformation.type` Poller (v14) bleibt
- * aktiv (fürs Dashboard, auch wenn er "lügt").
- * b) Ein NEUER "IP-Sniffer" (v15) Poller (alle 10s).
- * 2. Der IP-Sniffer nutzt den "WebRTC-Hack", um zu
- * versuchen, die *lokale IP-Adresse* zu finden.
- * 3. Wenn er eine lokale IP (192.168.x.x etc.) findet,
- * loggt er diese. Dies ist unser "Rauchender Colt"
- * für den AA-Handshake.
- * 4. Wir behalten den (nutzlosen) v14-Netzwerk-Check
- * im Code, um zu sehen, ob er *doch* irgendwann
- * aufwacht, jetzt da die App wach bleibt.
+ * NEUES FEATURE (DEINE IDEE):
+ * 4. HINZUFÜGEN: `screen.orientation.lock('portrait')`
+ * beim "START"-Klick, um das nervige Drehen zu verhindern.
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -58,8 +56,8 @@ document.addEventListener("DOMContentLoaded", () => {
     
     let ipSnifferInterval = null;
     let lastLocalIP = "";
-    const IP_SNIFFER_INTERVAL_MS = 10000; // Alle 10 Sekunden
-    let rtcPeerConnection = null; // Für den Sniffer
+    const IP_SNIFFER_INTERVAL_MS = 10000;
+    let rtcPeerConnection = null; 
 
     // --- v6: DEBUG Heartbeat Flags ---
     let motionSensorHasFired = false;
@@ -181,24 +179,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // 4. v15: IP-Sniffer (Polling-Funktion - Zange 2)
-    // Der "schmutzige" WebRTC-Hack
     function checkLocalIP() {
         if (!permissionsState.webrtc) return;
 
         try {
-            // Alte Verbindung schließen, falls vorhanden
             if (rtcPeerConnection) { rtcPeerConnection.close(); rtcPeerConnection = null; }
 
             const PeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
             const rtc = new PeerConnection({ iceServers: [] });
-            rtcPeerConnection = rtc; // Global speichern, um es später zu schließen
+            rtcPeerConnection = rtc;
             
-            rtc.createDataChannel(''); // Dummy-Kanal
+            rtc.createDataChannel(''); 
             
-            // Höre auf "ICE Candidates" (IP-Adressen)
             rtc.onicecandidate = (event) => {
                 if (event.candidate && event.candidate.candidate) {
-                    // Wir haben einen Kandidaten, jetzt die IP extrahieren
                     const ipRegex = /(192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3})/g;
                     const match = ipRegex.exec(event.candidate.candidate);
                     
@@ -208,20 +202,18 @@ document.addEventListener("DOMContentLoaded", () => {
                             addLogEntry(`IP-SNIFFER: Lokale IP-Änderung! Neue IP: ${newLocalIP}`, 'warn');
                             lastLocalIP = newLocalIP;
                         }
-                        // Verbindung sofort schließen, wir haben, was wir brauchen
                         if (rtc) { rtc.close(); rtcPeerConnection = null; }
                     }
                 }
             };
             
-            // Angebot erstellen, um den 'onicecandidate'-Prozess auszulösen
             rtc.createOffer()
                 .then(offer => rtc.setLocalDescription(offer))
                 .catch(err => addLogEntry(`IP-SNIFFER: Fehler beim Erstellen des Offers: ${err.message}`, 'error'));
 
         } catch (err) {
             addLogEntry(`IP-SNIFFER: Kritischer Fehler: ${err.message}`, 'error');
-            permissionsState.webrtc = false; // API scheint kaputt zu sein, stoppen
+            permissionsState.webrtc = false; 
             if (ipSnifferInterval) clearInterval(ipSnifferInterval);
         }
     }
@@ -354,9 +346,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Phase B: Startet alle Logger (v15)
-    function startAllLoggers() {
+    async function startAllLoggers() {
         addLogEntry("Phase B: Starte alle Logger (v15)...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
+
+        // --- NEUES FEATURE: Display sperren ---
+        addLogEntry("DEBUG: Versuche, Display-Rotation zu sperren ('portrait')...");
+        try {
+            if (screen.orientation && typeof screen.orientation.lock === 'function') {
+                await screen.orientation.lock('portrait-primary');
+                addLogEntry("DEBUG: Display-Rotation erfolgreich auf 'portrait' gesperrt.", 'info');
+            } else {
+                addLogEntry("DEBUG: 'screen.orientation.lock' API nicht gefunden.", 'warn');
+            }
+        } catch (err) {
+            // Das ist ein 'NotAllowedError', wenn der User es im OS blockiert hat. Kein Problem.
+            addLogEntry(`DEBUG: Display-Rotation konnte nicht gesperrt werden: ${err.message}`, 'warn');
+        }
+        // --- Ende neues Feature ---
 
         // 1. Anti-Schlaf-Audio STARTEN
         startAntiSleepAudio();
@@ -377,7 +384,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (permissionsState.webrtc) {
             ipSnifferInterval = setInterval(checkLocalIP, IP_SNIFFER_INTERVAL_MS);
             addLogEntry(`DEBUG: IP-Sniffer (WebRTC) Polling gestartet (Intervall: ${IP_SNIFFER_INTERVAL_MS}ms).`);
-            checkLocalIP(); // Sofortiger erster Check
+            checkLocalIP(); 
         }
 
         // 5. Bewegungs-Sensor-Logger
@@ -445,6 +452,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
         window.removeEventListener('devicemotion', logDeviceMotion);
         window.removeEventListener('deviceorientation', logDeviceOrientation);
+        
+        // --- NEU: Display-Rotation wieder freigeben ---
+        try {
+             if (screen.orientation && typeof screen.orientation.unlock === 'function') {
+                screen.orientation.unlock();
+                addLogEntry("DEBUG: Display-Rotation wieder freigegeben.", 'info');
+             }
+        } catch (err) {
+            addLogEntry(`DEBUG: Fehler beim Freigeben der Display-Rotation: ${err.message}`, 'warn');
+        }
+        // --- Ende ---
         
         isLogging = false;
         geoWatchId = null; networkCheckInterval = null; ipSnifferInterval = null;
