@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Waze Logger v19 (Wake Lock)</title>
+    <title>Waze Logger v20 (Cleaned)</title>
     <link rel="stylesheet" href="style.css">
     
     <!-- Chart.js Bibliothek -->
@@ -14,12 +14,17 @@
 </head>
 <body>
     <div class="container">
-        <h1>Waze Logger v19</h1>
-        <p class="subtitle">("Wake Lock API" statt Audio-Hack)</p>
+        <h1>Waze Logger v20</h1>
+        <p class="subtitle">("Wake Lock" Edition - Bereinigt)</p>
 
-        <!-- v19: Dashboard zeigt jetzt Wake-Lock-Status -->
+        <!-- v14/v15: Netzwerk-Dashboard (Zange 1) -->
         <div id="liveDashboard" class="dashboard-unknown">
-            <div id="wakeLockStatus">BEREIT</div>
+            <div id="networkStatus">BEREIT</div>
+        </div>
+
+        <!-- v19: WakeLock-Dashboard -->
+        <div id="wakeLockDashboard" class="dashboard-unknown">
+            <div id="wakeLockStatus">WAKE LOCK: BEREIT</div>
         </div>
         
         <div class="chart-container-wrapper">
@@ -31,12 +36,6 @@
                 <label for="orientationChart">Live: Fahrzeug-Lage (Beta/Gamma)</label>
                 <canvas id="orientationChart"></canvas>
             </div>
-        </div>
-
-        <div class="toggle-group">
-            <input type="checkbox" id="fallbackToggle">
-            <label for="fallbackToggle">Alte Sensor-API erzwingen (Fallback)</label>
-            <p>Wenn die App bei "Pre-Flight Check" einfriert, diese Box anhaken und neu laden.</p>
         </div>
 
         <div id="status">Status: Initialisiert...</div>
