@@ -1,5 +1,5 @@
-/* Waze Korrelations-Logger Stile - v20 */
-/* (Bereinigt, kein Fallback-Toggle) */
+/* Waze Korrelations-Logger Stile - v20.1 (Chart-Fix) */
+/* (Behebt das "unendliche Wachsen" der Charts) */
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
@@ -20,8 +20,8 @@ body {
 h1 { color: #bb86fc; text-align: center; margin-bottom: 5px; }
 .subtitle { text-align: center; margin-top: 0; margin-bottom: 15px; color: #a0a0a0; }
 
-/* v14/v15: Netzwerk-Dashboard */
-#liveDashboard {
+/* Dashboards */
+#liveDashboard, #wakeLockDashboard {
     padding: 15px;
     border-radius: 8px;
     margin-bottom: 10px;
@@ -34,14 +34,8 @@ h1 { color: #bb86fc; text-align: center; margin-bottom: 5px; }
     color: #ffffff;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
 }
-
-/* v19: WakeLock-Dashboard */
 #wakeLockDashboard {
-    padding: 10px;
-    border-radius: 8px;
-    margin-bottom: 15px;
-    text-align: center;
-    transition: background-color 0.5s ease;
+    padding: 10px; /* WakeLock ist sekundär, kleiner */
 }
 #wakeLockStatus {
     font-size: 1.1em;
@@ -56,7 +50,7 @@ h1 { color: #bb86fc; text-align: center; margin-bottom: 5px; }
 .dashboard-unknown { background-color: #555; border: 1px solid #888; } /* Grau */
 .dashboard-active { background-color: #2f9e44; border: 1px solid #69db7c; } /* Grün (für WakeLock) */
 
-/* Chart-Container */
+/* --- HIER IST DER FIX (v20.1) --- */
 .chart-container-wrapper {
     display: grid;
     grid-template-columns: 1fr;
@@ -66,11 +60,16 @@ h1 { color: #bb86fc; text-align: center; margin-bottom: 5px; }
 @media (min-width: 600px) {
     .chart-container-wrapper { grid-template-columns: 1fr 1fr; }
 }
+
 .chart-container {
     background-color: #2c2c2c;
     padding: 10px;
     border-radius: 8px;
     border: 1px solid #444;
+    
+    /* v20.1 FIX: Erzwingt eine fixe Höhe für den Container */
+    position: relative; /* Wichtig für Chart.js */
+    height: 170px; /* Fixe Höhe, um das "Wachsen" zu stoppen */
 }
 .chart-container label {
     margin-top: 0;
@@ -80,7 +79,14 @@ h1 { color: #bb86fc; text-align: center; margin-bottom: 5px; }
     display: block;
     margin-bottom: 10px;
 }
-canvas { max-width: 100%; height: 150px; } /* Höhe ist jetzt fix */
+canvas {
+    max-width: 100%;
+    /* v20.1 FIX: Das Canvas soll 100% des Containers füllen */
+    height: 100% !important; 
+    width: 100% !important;
+}
+/* --- ENDE DES FIXES --- */
+
 
 /* Status & Buttons */
 #status {
