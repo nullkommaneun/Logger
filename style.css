@@ -1,5 +1,5 @@
-/* Waze Korrelations-Logger Stile - v19 */
-/* (Basiert auf v16, Dashboard-Farben geändert) */
+/* Waze Korrelations-Logger Stile - v20 */
+/* (Bereinigt, kein Fallback-Toggle) */
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
@@ -20,42 +20,51 @@ body {
 h1 { color: #bb86fc; text-align: center; margin-bottom: 5px; }
 .subtitle { text-align: center; margin-top: 0; margin-bottom: 15px; color: #a0a0a0; }
 
-/* v19: Live-Dashboard-Stile für Wake Lock */
+/* v14/v15: Netzwerk-Dashboard */
 #liveDashboard {
-    padding: 20px;
+    padding: 15px;
     border-radius: 8px;
-    margin-bottom: 15px;
+    margin-bottom: 10px;
     text-align: center;
     transition: background-color 0.5s ease;
 }
-
-#wakeLockStatus {
-    font-size: 1.8em;
+#networkStatus {
+    font-size: 1.5em;
     font-weight: bold;
     color: #ffffff;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
 }
 
-/* Dashboard-Status-Farben (v19) */
-.dashboard-offline { /* v19: Jetzt für "Inaktiv" */
-    background-color: #c92a2a; /* Dunkelrot */
-    border: 1px solid #ff6b6b;
+/* v19: WakeLock-Dashboard */
+#wakeLockDashboard {
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    text-align: center;
+    transition: background-color 0.5s ease;
 }
-.dashboard-active { /* v19: Jetzt für "Aktiv" */
-    background-color: #2f9e44; /* Dunkelgrün */
-    border: 1px solid #69db7c;
+#wakeLockStatus {
+    font-size: 1.1em;
+    font-weight: bold;
+    color: #ffffff;
 }
-.dashboard-unknown {
-    background-color: #555; /* Grau */
-    border: 1px solid #888;
-}
+
+/* Dashboard-Status-Farben */
+.dashboard-offline { background-color: #c92a2a; border: 1px solid #ff6b6b; } /* Rot */
+.dashboard-cellular { background-color: #1971c2; border: 1px solid #74c0fc; } /* Blau */
+.dashboard-wifi { background-color: #2f9e44; border: 1px solid #69db7c; } /* Grün */
+.dashboard-unknown { background-color: #555; border: 1px solid #888; } /* Grau */
+.dashboard-active { background-color: #2f9e44; border: 1px solid #69db7c; } /* Grün (für WakeLock) */
 
 /* Chart-Container */
 .chart-container-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 15px;
     margin-bottom: 15px;
+}
+@media (min-width: 600px) {
+    .chart-container-wrapper { grid-template-columns: 1fr 1fr; }
 }
 .chart-container {
     background-color: #2c2c2c;
@@ -71,38 +80,7 @@ h1 { color: #bb86fc; text-align: center; margin-bottom: 5px; }
     display: block;
     margin-bottom: 10px;
 }
-canvas { max-width: 100%; max-height: 150px; }
-
-/* Toggle-Gruppe */
-.toggle-group {
-    background-color: #332a40;
-    border: 1px solid #bb86fc;
-    padding: 12px;
-    margin-bottom: 15px;
-    border-radius: 5px;
-    display: flex;
-    flex-direction: column;
-}
-.toggle-group label {
-    display: flex;
-    align-items: center;
-    font-size: 1.1em;
-    font-weight: bold;
-    cursor: pointer;
-    color: #e0e0e0;
-}
-.toggle-group input[type="checkbox"] {
-    margin-right: 10px;
-    width: 18px;
-    height: 18px;
-    accent-color: #bb86fc;
-}
-.toggle-group p {
-    font-size: 0.9em;
-    color: #b0b0b0;
-    margin: 8px 0 0 0;
-    padding-left: 28px;
-}
+canvas { max-width: 100%; height: 150px; } /* Höhe ist jetzt fix */
 
 /* Status & Buttons */
 #status {
