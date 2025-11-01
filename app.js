@@ -1,25 +1,19 @@
 /*
- * Waze Korrelations-Logger - v19 "Operation Koffein"
- * ====================================================
+ * Waze Korrelations-Logger - v20 "Bereinigt"
+ * ==========================================
  *
- * BASIS: v18 (Stabile Charts, kein Screen-Lock)
+ * BASIS: v19 (Stabiler WakeLock, Stabile Charts)
  *
- * ANALYSE v18-Feldversuch (Log vom 31.10.):
- * 1. FEHLER (SHOW-STOPPER): Der "Anti-Schlaf-Hack" (v14/v18)
- * ist GESCHEITERT. Der Log zeigt eine 1-Minuten-Lücke.
- * Androids Doze-Mode ist aggressiver.
- *
- * PLAN v19:
- * 1. RAUS: Der "Anti-Schlaf-Hack" (stilles Audio) wird
- * entfernt. Er war unzuverlässig.
- * 2. REIN: Wir ersetzen ihn durch den "sauberen" Hack:
- * die "Wake Lock API" (`navigator.wakeLock`).
- * 3. VISUALISIERUNG: Das Live-Dashboard (v14) wird
- * umfunktioniert, um den Wake-Lock-Status anzuzeigen
- * (AKTIV / INAKTIV).
- *
- * Das ist der letzte, stärkste Versuch, die App im
- * Hintergrund wach zu halten.
+ * PLAN v20:
+ * 1. RAUS: Der "Fallback-Toggle" (v13) wird
+ * sowohl aus der UI (HTML/CSS) als auch aus der
+ * Logik (JS) entfernt. Er war auf Canary 144
+ * nicht mehr nötig.
+ * 2. OPTIMIERUNG: Code wird bereinigt, alle
+ * "useFallback"-Prüfungen werden entfernt.
+ * 3. Die App ist jetzt ein sauberes, stabiles
+ * Diagnose-Tool, das auf die finale Jagd
+ * (Schwarzes Loch v3: AA-Handshake) geht.
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -35,11 +29,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const stopBtn = document.getElementById('stopBtn');
     const crashBtn = document.getElementById('crashBtn');
     const downloadBtn = document.getElementById('downloadBtn');
-    const fallbackToggle = document.getElementById('fallbackToggle');
     const liveDashboard = document.getElementById('liveDashboard');
-    const wakeLockStatusEl = document.getElementById('wakeLockStatus'); // v19
+    const networkStatusEl = document.getElementById('networkStatus');
+    const wakeLockDashboard = document.getElementById('wakeLockDashboard');
+    const wakeLockStatusEl = document.getElementById('wakeLockStatus');
     
-    // --- v16: Chart-Kontexte ---
+    // --- Chart-Kontexte ---
     const gpsChartCtx = document.getElementById('gpsChart')?.getContext('2d');
     const orientationChartCtx = document.getElementById('orientationChart')?.getContext('2d');
     let gpsChart = null;
@@ -51,12 +46,12 @@ document.addEventListener("DOMContentLoaded", () => {
     let isLogging = false;
     let logEntries = [];
     let geoWatchId = null;
-    let permissionsState = { gps: false, motion: false, orientation: false, network: false, webrtc: false, wakelock: false }; // v19
+    let permissionsState = { gps: false, motion: false, orientation: false, network: false, webrtc: false, wakelock: false };
 
-    // --- v19: WakeLock-API ---
+    // --- WakeLock-API ---
     let wakeLockSentinel = null;
 
-    // --- v15: Netzwerk-Zwei-Zangen-Attacke ---
+    // --- Netzwerk-Zwei-Zangen-Attacke ---
     let networkCheckInterval = null;
     let lastNetworkType = "unknown";
     let lastOnlineStatus = navigator.onLine;
@@ -66,18 +61,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const IP_SNIFFER_INTERVAL_MS = 10000;
     let rtcPeerConnection = null; 
 
-    // --- v18: Chart-Timer & Zustands-Variablen ---
+    // --- Chart-Timer & Zustands-Variablen ---
     let chartUpdateInterval = null;
     const CHART_UPDATE_INTERVAL_MS = 1000; // 1 Hz
     let currentGpsAccuracy = 0.0;
     let currentGforce = 0.0;
     let currentOrientation = { beta: 0.0, gamma: 0.0 };
 
-    // --- v6: DEBUG Heartbeat Flags ---
+    // --- DEBUG Heartbeat Flags ---
     let motionSensorHasFired = false;
     let orientationSensorHasFired = false;
 
-    // --- v5: Flugschreiber & Jolt Detection ---
+    // --- Flugschreiber & Jolt Detection ---
     let flightRecorderBuffer = [];
     const FLIGHT_RECORDER_DURATION_MS = 2500;
     const JOLT_THRESHOLD_MS2 = 25.0; 
@@ -89,7 +84,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- Universal-Funktion zum Loggen (ins Haupt-Log) ---
     function getTimestamp() { return new Date().toISOString(); }
-    const logDebug = (window.logDebug || console.log);
+    const logDebug = (window.logDebug || console.log); // Nutzt unseren Debugger
 
     function addLogEntry(message, level = 'info') {
         const logString = `${getTimestamp()} | ${message}`;
@@ -107,8 +102,7 @@ document.addEventListener("DOMContentLoaded", () => {
          }
     }
 
-    // --- v5: Flugschreiber-Funktionen ---
-    // (Identisch zu v18)
+    // --- Flugschreiber-Funktionen ---
     function pushToFlightRecorder(timestamp, type, dataString) {
         flightRecorderBuffer.push({ timestamp, type, dataString });
         const cutoffTime = timestamp - FLIGHT_RECORDER_DURATION_MS;
@@ -131,9 +125,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- v16: CHART-FUNKTIONEN (v18-Fix) ---
+    // --- CHART-FUNKTIONEN (v18-Logik) ---
     // ===================================
-    // (Identisch zu v18)
     Chart.defaults.color = '#e0e0e0';
     Chart.defaults.borderColor = '#444';
 
@@ -189,12 +182,11 @@ document.addEventListener("DOMContentLoaded", () => {
         currentGforce = 0.0; 
     }
 
-
     // ===================================
-    // --- SENSOR-HANDLER (v19) ---
+    // --- SENSOR-HANDLER (v20) ---
     // ===================================
 
-    // 1. GPS-Erfolg (Identisch zu v18)
+    // 1. GPS-Erfolg
     function logPosition(position) { 
         const coords = position.coords;
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
@@ -205,7 +197,7 @@ document.addEventListener("DOMContentLoaded", () => {
         currentGpsAccuracy = accuracy;
      }
 
-    // 2. GPS-Fehler (Identisch zu v18)
+    // 2. GPS-Fehler
     function logError(error) { 
         let message = '';
         switch(error.code) {
@@ -218,7 +210,7 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Fehler: GPS-Problem!";
      }
     
-    // 3. v14: Netzwerk-Wächter (Polling) (Identisch zu v18)
+    // 3. Netzwerk-Wächter (Polling)
     function checkNetworkState(isInitialCall = false) {
         if (!permissionsState.network) return; 
         try {
@@ -228,9 +220,16 @@ document.addEventListener("DOMContentLoaded", () => {
             else { const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
                 currentType = connection ? connection.type : 'cellular'; }
             
-            // v19: Dieser Wächter ist jetzt *sekundär* zum WakeLock-Wächter.
-            // Wir loggen ihn, aber das Dashboard wird vom WakeLock gesteuert.
-            
+            if (!isOnline) {
+                liveDashboard.className = 'dashboard-offline'; networkStatusEl.textContent = 'STATUS: OFFLINE';
+            } else if (currentType === 'wifi') {
+                liveDashboard.className = 'dashboard-wifi'; networkStatusEl.textContent = 'NETZ: WIFI (VERBUNDEN?)';
+            } else if (currentType === 'cellular') {
+                liveDashboard.className = 'dashboard-cellular'; networkStatusEl.textContent = 'NETZ: MOBILFUNK';
+            } else {
+                liveDashboard.className = 'dashboard-unknown'; networkStatusEl.textContent = `NETZ: ${currentType.toUpperCase()}`;
+            }
+
             if (currentType !== lastNetworkType || isOnline !== lastOnlineStatus || isInitialCall) {
                 const logString = `NETZWERK-STATUS: Online: ${isOnline} | Typ: ${currentType}`;
                 if (isInitialCall) { addLogEntry(logString, 'info'); }
@@ -244,7 +243,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 4. v15: IP-Sniffer (Polling) (Identisch zu v18)
+    // 4. IP-Sniffer (Polling)
     function checkLocalIP() {
         if (!permissionsState.webrtc) return;
         try {
@@ -277,7 +276,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 5. Bewegungssensor (Identisch zu v18)
+    // 5. Bewegungssensor
     function logDeviceMotion(event) {
         const now = Date.now();
         const acc = event.accelerationIncludingGravity;
@@ -301,7 +300,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 6. Orientierungssensor (Identisch zu v18)
+    // 6. Orientierungssensor
     function logDeviceOrientation(event) {
         const now = Date.now();
         if (!orientationSensorHasFired) {
@@ -317,7 +316,7 @@ document.addEventListener("DOMContentLoaded", () => {
         currentOrientation = { beta: event.beta, gamma: event.gamma };
     }
     
-    // 7. v19: NEUER "Anti-Schlaf-Hack" (Wake Lock API)
+    // 7. "Anti-Schlaf-Hack" (Wake Lock API)
     async function startWakeLock() {
         if (!permissionsState.wakelock) {
             addLogEntry("DEBUG: WakeLock-API nicht verfügbar. Überspringe.", 'warn');
@@ -325,19 +324,18 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         try {
             wakeLockSentinel = await navigator.wakeLock.request('screen');
-            liveDashboard.className = 'dashboard-active';
+            wakeLockDashboard.className = 'dashboard-active';
             wakeLockStatusEl.textContent = 'WAKE LOCK: AKTIV';
             addLogEntry("DEBUG: 'WakeLock (Anti-Schlaf)' erfolgreich angefordert.", 'info');
             
-            // Listener, falls der Lock vom System unterbrochen wird
             wakeLockSentinel.onrelease = () => {
                 addLogEntry("DEBUG: 'WakeLock' wurde vom System freigegeben (z.B. Tab unsichtbar).", 'warn');
-                liveDashboard.className = 'dashboard-offline';
+                wakeLockDashboard.className = 'dashboard-offline';
                 wakeLockStatusEl.textContent = 'WAKE LOCK: INAKTIV';
             };
         } catch (err) {
             addLogEntry(`FEHLER: 'WakeLock' konnte nicht angefordert werden: ${err.message}`, 'error');
-            liveDashboard.className = 'dashboard-offline';
+            wakeLockDashboard.className = 'dashboard-offline';
             wakeLockStatusEl.textContent = 'WAKE LOCK: FEHLER';
         }
     }
@@ -356,86 +354,80 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
     // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v19) ---
+    // --- STEUERUNGS-FUNKTIONEN (v20) ---
     // ===================================
 
-    // Phase A: Pre-Flight Check (v19: Fügt WakeLock-Check hinzu)
+    // Phase A: Pre-Flight Check (v20 - Bereinigt)
     async function requestAllPermissions() {
-        addLogEntry("Phase A: Fordere Berechtigungen an (v19)...");
+        addLogEntry("Phase A: Fordere Berechtigungen an (v20)...");
         statusEl.textContent = "Berechtigungen anfordern...";
-        const useFallback = fallbackToggle.checked;
-        if (useFallback) { addLogEntry("DEBUG v19: 'Alte API erzwingen' ist AKTIV. Überspringe 'requestPermission'.", 'warn'); }
-
-        // --- WakeLock (v19) ---
-        addLogEntry("DEBUG v19: Prüfe WakeLock-API...");
+        
+        // --- WakeLock ---
         if ('wakeLock' in navigator) {
-            permissionsState.wakelock = true; addLogEntry("DEBUG v19: BERECHTIGUNG: WakeLock-API gefunden.");
+            permissionsState.wakelock = true; addLogEntry("DEBUG: BERECHTIGUNG: WakeLock-API gefunden.");
         } else { addLogEntry("BERECHTIGUNG: WakeLock-API wird nicht unterstützt!", 'warn'); }
 
         // --- GPS ---
-        addLogEntry("DEBUG v19: Fordere GPS an...");
+        addLogEntry("DEBUG: Fordere GPS an...");
         try {
             if (!navigator.geolocation) throw new Error("Geolocation wird nicht unterstützt.");
             await new Promise((resolve, reject) => { navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 }); });
-            permissionsState.gps = true; addLogEntry("DEBUG v19: BERECHTIGUNG: GPS erteilt.");
+            permissionsState.gps = true; addLogEntry("DEBUG: BERECHTIGUNG: GPS erteilt.");
         } catch (err) { addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error'); permissionsState.gps = false; }
-        addLogEntry("DEBUG v19: GPS-Anfrage abgeschlossen.");
         
         if (!permissionsState.gps) return false;
 
-        // --- Netzwerk (v14-Stil) ---
+        // --- Netzwerk ---
         if ('connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator) {
-            permissionsState.network = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Netzwerk-API gefunden.");
+            permissionsState.network = true; addLogEntry("DEBUG: BERECHTIGUNG: Netzwerk-API gefunden.");
         } else { addLogEntry("BERECHTIGUNG: Netzwerk-API wird nicht unterstützt!", 'warn'); }
 
-        // --- WebRTC (v15-Stil) ---
+        // --- WebRTC ---
         if ('RTCPeerConnection' in window || 'webkitRTCPeerConnection' in window) {
-            permissionsState.webrtc = true; addLogEntry("DEBUG v19: BERECHTIGUNG: WebRTC-API gefunden.");
+            permissionsState.webrtc = true; addLogEntry("DEBUG: BERECHTIGUNG: WebRTC-API gefunden.");
         } else { addLogEntry("BERECHTIGUNG: WebRTC-API wird nicht unterstützt!", 'warn'); }
         
         // --- Bewegung ---
-        if (useFallback) {
-            permissionsState.motion = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Bewegungssensor (Fallback erzwungen) OK.");
-        } else if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
+        if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
+            addLogEntry("DEBUG: 'requestPermission' Motion-API erkannt, fordere an...");
             try {
                 const state = await DeviceMotionEvent.requestPermission();
                 permissionsState.motion = (state === 'granted');
-                addLogEntry(`DEBUG v19: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
-            } catch (err) { addLogEntry(`DEBUG v19: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error'); permissionsState.motion = false; }
+                addLogEntry(`DEBUG: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+            } catch (err) { addLogEntry(`DEBUG: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error'); permissionsState.motion = false; }
         } else if ('DeviceMotionEvent' in window) {
-             permissionsState.motion = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Bewegungssensor (Implizit/Alt) OK.");
+             permissionsState.motion = true; addLogEntry("DEBUG: BERECHTIGUNG: Bewegungssensor (Implizit/Alt) OK.");
         } else { addLogEntry("BERECHTIGUNG: Bewegungssensor wird nicht unterstützt!", 'error'); permissionsState.motion = false; }
 
         // --- Orientierung ---
-        addLogEntry("DEBUG v19: Füge kleine Pause ein (500ms)..."); await delay(500); 
-        if (useFallback) {
-             permissionsState.orientation = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Orientierungssensor (Fallback erzwungen) OK.");
-        } else if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
+        addLogEntry("DEBUG: Füge kleine Pause ein (500ms)..."); await delay(500); 
+        if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
+             addLogEntry("DEBUG: 'requestPermission' Orientation-API erkannt, fordere an...");
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
                 permissionsState.orientation = (state === 'granted');
-                addLogEntry(`DEBUG v19: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
-            } catch (err) { addLogEntry(`DEBUG v19: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error'); permissionsState.orientation = false; }
+                addLogEntry(`DEBUG: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+            } catch (err) { addLogEntry(`DEBUG: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error'); permissionsState.orientation = false; }
         } else if ('DeviceOrientationEvent' in window) {
-            permissionsState.orientation = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Orientierungssensor (Implizit/Alt) OK.");
+            permissionsState.orientation = true; addLogEntry("DEBUG: BERECHTIGUNG: Orientierungssensor (Implizit/Alt) OK.");
         } else { addLogEntry("BERECHTIGUNG: Orientierungssensor wird nicht unterstützt!", 'error'); permissionsState.orientation = false; }
         
         addLogEntry("Phase A: Pre-Flight Check beendet.");
         return permissionsState.gps; 
     }
 
-    // Phase B: Startet alle Logger (v19)
+    // Phase B: Startet alle Logger
     async function startAllLoggers() {
-        addLogEntry("Phase B: Starte alle Logger (v19)...");
+        addLogEntry("Phase B: Starte alle Logger (v20)...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
 
-        // 1. v19: Wake Lock STARTEN
+        // 1. Wake Lock STARTEN
         await startWakeLock();
         
         // 2. Charts initialisieren
         initCharts();
         
-        // 3. NEUEN Chart-Update-Timer starten
+        // 3. Chart-Update-Timer starten
         chartUpdateInterval = setInterval(updateCharts, CHART_UPDATE_INTERVAL_MS);
         addLogEntry(`DEBUG: 'chartUpdateInterval' (1Hz) gestartet.`);
         
@@ -473,11 +465,11 @@ document.addEventListener("DOMContentLoaded", () => {
         isLogging = true;
         startBtn.disabled = true; permissionBtn.disabled = true;
         stopBtn.disabled = false; crashBtn.disabled = false;
-        downloadBtn.disabled = true; fallbackToggle.disabled = true;
+        downloadBtn.disabled = true; 
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (v19) ---
+    // --- BUTTON-HANDLER (v20) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
@@ -494,7 +486,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (gpsOk) {
             statusEl.textContent = "Bereit zum Loggen! (GPS OK)";
             startBtn.disabled = false; downloadBtn.disabled = true; permissionBtn.disabled = true; 
-            fallbackToggle.disabled = true; 
         } else {
             statusEl.textContent = "Fehler: GPS-Berechtigung benötigt!";
             permissionBtn.disabled = false; 
@@ -508,16 +499,16 @@ document.addEventListener("DOMContentLoaded", () => {
         lastNetworkType = "unknown"; lastOnlineStatus = navigator.onLine; lastLocalIP = "";
         currentGpsAccuracy = 0.0; currentGforce = 0.0; currentOrientation = { beta: 0.0, gamma: 0.0 };
         
-        addLogEntry(`Logging-Prozess angefordert (v19)...`);
+        addLogEntry(`Logging-Prozess angefordert (v20)...`);
         startAllLoggers();
     };
 
     // STOP
-    stopBtn.onclick = () => {
+    stopBtn.onclick = async () => {
         if (!isLogging) return;
         
         // Alle Timer und Listener stoppen
-        stopWakeLock(); // v19
+        await stopWakeLock(); // v19
         if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
         if (networkCheckInterval) clearInterval(networkCheckInterval); 
         if (ipSnifferInterval) clearInterval(ipSnifferInterval);
@@ -542,9 +533,10 @@ document.addEventListener("DOMContentLoaded", () => {
         stopBtn.disabled = true;
         crashBtn.disabled = true;
         downloadBtn.disabled = false; 
-        fallbackToggle.disabled = false; 
         liveDashboard.className = 'dashboard-unknown';
-        wakeLockStatusEl.textContent = 'BEREIT';
+        networkStatusEl.textContent = 'BEREIT';
+        wakeLockDashboard.className = 'dashboard-unknown';
+        wakeLockStatusEl.textContent = 'WAKE LOCK: BEREIT';
     };
 
     // ABSTURZ MARKIEREN
@@ -560,7 +552,7 @@ document.addEventListener("DOMContentLoaded", () => {
     downloadBtn.onclick = () => { 
         if (logEntries.length === 0) { alert("Keine Logs zum Herunterladen vorhanden."); return; }
         const logData = logEntries.join('\n');
-        const filename = `waze_log_v19_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v20_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const blob = new Blob([logData], { type: 'text/plain;charset=utf-8' }); 
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -575,5 +567,7 @@ document.addEventListener("DOMContentLoaded", () => {
     crashBtn.disabled = true;
     downloadBtn.disabled = true;
     liveDashboard.className = 'dashboard-unknown';
-    wakeLockStatusEl.textContent = 'BEREIT';
-});
+    networkStatusEl.textContent = 'BEREIT';
+    wakeLockDashboard.className = 'dashboard-unknown';
+    wakeLockStatusEl.textContent = 'WAKE LOCK: BEREIT';
+}); 
