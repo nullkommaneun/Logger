@@ -1,8 +1,8 @@
 /*
- * Waze Korrelations-Logger - System-Debugger v6
+ * Waze Korrelations-Logger - System-Debugger v7
  * =============================================
  *
- * v6 fügt einen Check für die Chart.js-Bibliothek hinzu.
+ * v7 fügt einen Check für die 'WakeLock' API hinzu.
  *
  * Lädt zuerst, prüft Systemvoraussetzungen und fängt globale Fehler.
  */
@@ -31,10 +31,10 @@
         }
 
         window.logDebug = logDebug; // Global verfügbar machen für app.js
-        logDebug(`Debugger v6 initialisiert...`);
+        logDebug(`Debugger v7 initialisiert...`);
 
         // --- System-Check ---
-        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v6 ---");
+        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v7 ---");
 
         if (window.location.protocol !== "https:") {
             logDebug("SYSTEM-CHECK: HTTPS ... FEHLER! Viele APIs benötigen HTTPS.", 'error');
@@ -59,9 +59,10 @@
             }
         };
 
-        // *** NEU v16: Chart.js Check ***
-        checkApi('Chart.js (Externe Lib)', () => typeof Chart !== 'undefined');
+        // *** NEU v19: WakeLock Check ***
+        checkApi('WakeLock (Anti-Schlaf)', () => 'wakeLock' in navigator);
         
+        checkApi('Chart.js (Externe Lib)', () => typeof Chart !== 'undefined');
         checkApi('Geolocation', () => 'geolocation' in navigator);
         checkApi('MediaDevices (Audio/BT)', () => 'mediaDevices' in navigator && 'enumerateDevices' in navigator.mediaDevices);
         checkApi('NetworkInformation (Netzwerk-Typ)', () => 'connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator);
