@@ -1,8 +1,8 @@
 /*
- * Waze Korrelations-Logger - System-Debugger v7
+ * Waze Korrelations-Logger - System-Debugger v8
  * =============================================
  *
- * v7 fügt einen Check für die 'WakeLock' API hinzu.
+ * v8: Bereinigt, Fallback-Checks entfernt.
  *
  * Lädt zuerst, prüft Systemvoraussetzungen und fängt globale Fehler.
  */
@@ -31,10 +31,10 @@
         }
 
         window.logDebug = logDebug; // Global verfügbar machen für app.js
-        logDebug(`Debugger v7 initialisiert...`);
+        logDebug(`Debugger v8 initialisiert...`);
 
         // --- System-Check ---
-        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v7 ---");
+        logDebug("--- SYSTEM-CHECK (Herz und Nieren) v8 ---");
 
         if (window.location.protocol !== "https:") {
             logDebug("SYSTEM-CHECK: HTTPS ... FEHLER! Viele APIs benötigen HTTPS.", 'error');
@@ -58,19 +58,19 @@
                 return false;
             }
         };
-
-        // *** NEU v19: WakeLock Check ***
-        checkApi('WakeLock (Anti-Schlaf)', () => 'wakeLock' in navigator);
         
+        // Kern-APIs
+        checkApi('WakeLock (Anti-Schlaf)', () => 'wakeLock' in navigator);
         checkApi('Chart.js (Externe Lib)', () => typeof Chart !== 'undefined');
         checkApi('Geolocation', () => 'geolocation' in navigator);
-        checkApi('MediaDevices (Audio/BT)', () => 'mediaDevices' in navigator && 'enumerateDevices' in navigator.mediaDevices);
+        
+        // Zangen-APIs
         checkApi('NetworkInformation (Netzwerk-Typ)', () => 'connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator);
         checkApi('WebRTC (IP-Sniffer)', () => 'RTCPeerConnection' in window || 'webkitRTCPeerConnection' in window);
 
-        // Alte Sensor APIs
-        checkApi('DeviceMotionEvent (Bewegung - Alt)', () => 'DeviceMotionEvent' in window);
-        checkApi('DeviceOrientationEvent (Ausrichtung - Alt)', () => 'DeviceOrientationEvent' in window);
+        // Sensor-APIs
+        checkApi('DeviceMotionEvent (Bewegung)', () => 'DeviceMotionEvent' in window);
+        checkApi('DeviceOrientationEvent (Ausrichtung)', () => 'DeviceOrientationEvent' in window);
 
         // Permission-Checks
         if (typeof DeviceMotionEvent.requestPermission === 'function') {
