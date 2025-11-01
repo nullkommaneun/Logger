@@ -1,24 +1,25 @@
 /*
- * Waze Korrelations-Logger - v18 "Screen-Lock-Fix"
- * ==================================================
+ * Waze Korrelations-Logger - v19 "Operation Koffein"
+ * ====================================================
  *
- * BASIS: v17
+ * BASIS: v18 (Stabile Charts, kein Screen-Lock)
  *
- * FEHLERBEHEBUNG (Dein Feedback):
- * 1. "Nichts geht mehr."
- * 2. ANALYSE: Der `await screen.orientation.lock()`-Befehl
- * in v17 friert (wie der 'requestPermission'-Bug)
- * die App ein.
+ * ANALYSE v18-Feldversuch (Log vom 31.10.):
+ * 1. FEHLER (SHOW-STOPPER): Der "Anti-Schlaf-Hack" (v14/v18)
+ * ist GESCHEITERT. Der Log zeigt eine 1-Minuten-Lücke.
+ * Androids Doze-Mode ist aggressiver.
  *
- * PLAN v18:
- * 1. RAUS: Das "Screen-Lock"-Feature wird komplett
- * entfernt. Stabilität ist wichtiger.
- * 2. BEHALTEN: Die "Chart-Entkopplung" (v17)
- * war der korrekte Fix für den "verschwindenden Chart"-Bug.
- * 3. OPTIMIERUNG: Sensor-Zustandsvariablen (currentGpsAccuracy)
- * speichern jetzt saubere Zahlen (Numbers) statt
- * Text-Strings (.toFixed()), um Chart.js
- * zuverlässig zu füttern.
+ * PLAN v19:
+ * 1. RAUS: Der "Anti-Schlaf-Hack" (stilles Audio) wird
+ * entfernt. Er war unzuverlässig.
+ * 2. REIN: Wir ersetzen ihn durch den "sauberen" Hack:
+ * die "Wake Lock API" (`navigator.wakeLock`).
+ * 3. VISUALISIERUNG: Das Live-Dashboard (v14) wird
+ * umfunktioniert, um den Wake-Lock-Status anzuzeigen
+ * (AKTIV / INAKTIV).
+ *
+ * Das ist der letzte, stärkste Versuch, die App im
+ * Hintergrund wach zu halten.
  *
  * Gebaut von deinem Sparingpartner.
  */
@@ -36,7 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const downloadBtn = document.getElementById('downloadBtn');
     const fallbackToggle = document.getElementById('fallbackToggle');
     const liveDashboard = document.getElementById('liveDashboard');
-    const networkStatusEl = document.getElementById('networkStatus');
+    const wakeLockStatusEl = document.getElementById('wakeLockStatus'); // v19
     
     // --- v16: Chart-Kontexte ---
     const gpsChartCtx = document.getElementById('gpsChart')?.getContext('2d');
@@ -50,30 +51,27 @@ document.addEventListener("DOMContentLoaded", () => {
     let isLogging = false;
     let logEntries = [];
     let geoWatchId = null;
-    let permissionsState = { gps: false, motion: false, orientation: false, network: false, webrtc: false };
+    let permissionsState = { gps: false, motion: false, orientation: false, network: false, webrtc: false, wakelock: false }; // v19
 
-    // --- v14: Anti-Schlaf-Audio-Kontext ---
-    let antiSleepContext = null;
-    let antiSleepOscillator = null;
+    // --- v19: WakeLock-API ---
+    let wakeLockSentinel = null;
 
     // --- v15: Netzwerk-Zwei-Zangen-Attacke ---
     let networkCheckInterval = null;
     let lastNetworkType = "unknown";
     let lastOnlineStatus = navigator.onLine;
     const NETWORK_POLL_INTERVAL_MS = 3000;
-    
     let ipSnifferInterval = null;
     let lastLocalIP = "";
     const IP_SNIFFER_INTERVAL_MS = 10000;
     let rtcPeerConnection = null; 
 
-    // --- v18: Chart-Timer & Zustands-Variablen (Optimiert) ---
+    // --- v18: Chart-Timer & Zustands-Variablen ---
     let chartUpdateInterval = null;
     const CHART_UPDATE_INTERVAL_MS = 1000; // 1 Hz
     let currentGpsAccuracy = 0.0;
     let currentGforce = 0.0;
     let currentOrientation = { beta: 0.0, gamma: 0.0 };
-
 
     // --- v6: DEBUG Heartbeat Flags ---
     let motionSensorHasFired = false;
@@ -110,6 +108,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --- v5: Flugschreiber-Funktionen ---
+    // (Identisch zu v18)
     function pushToFlightRecorder(timestamp, type, dataString) {
         flightRecorderBuffer.push({ timestamp, type, dataString });
         const cutoffTime = timestamp - FLIGHT_RECORDER_DURATION_MS;
@@ -134,6 +133,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ===================================
     // --- v16: CHART-FUNKTIONEN (v18-Fix) ---
     // ===================================
+    // (Identisch zu v18)
     Chart.defaults.color = '#e0e0e0';
     Chart.defaults.borderColor = '#444';
 
@@ -145,115 +145,68 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             return; 
         }
-        
-        // --- GPS- & G-Kraft-Chart ---
         if (gpsChartCtx) {
             gpsChart = new Chart(gpsChartCtx, {
-                type: 'line',
-                data: { labels: [], datasets: [
+                type: 'line', data: { labels: [], datasets: [
                     { label: 'GPS Genauigkeit (m)', data: [], borderColor: '#03a9f4', backgroundColor: 'rgba(3, 169, 244, 0.3)', fill: false, tension: 0.1, yAxisID: 'yGps' },
                     { label: 'G-Kraft (m/s²)', data: [], borderColor: '#f44336', backgroundColor: 'rgba(244, 67, 54, 0.3)', fill: false, tension: 0.1, yAxisID: 'yGforce' }
                 ]},
-                options: {
-                    scales: {
-                        x: { display: false },
-                        yGps: { type: 'linear', position: 'left', title: { display: true, text: 'GPS (m)' }, ticks: { color: '#03a9f4' } },
-                        yGforce: { type: 'linear', position: 'right', title: { display: true, text: 'G-Kraft' }, ticks: { color: '#f44336' }, grid: { drawOnChartArea: false } }
-                    },
-                    animation: { duration: 0 },
-                    maintainAspectRatio: false
-                }
+                options: { scales: { x: { display: false }, yGps: { type: 'linear', position: 'left', title: { display: true, text: 'GPS (m)' }, ticks: { color: '#03a9f4' } }, yGforce: { type: 'linear', position: 'right', title: { display: true, text: 'G-Kraft' }, ticks: { color: '#f44336' }, grid: { drawOnChartArea: false } } }, animation: { duration: 0 }, maintainAspectRatio: false }
             });
         }
-        
-        // --- Orientierungs-Chart ---
         if (orientationChartCtx) {
             orientationChart = new Chart(orientationChartCtx, {
-                type: 'bar',
-                data: { labels: ['Neigung (X)', 'Seitenneigung (Y)'], datasets: [
-                    { label: 'Grad', data: [0, 0], backgroundColor: ['#bb86fc', '#03dac6'], borderWidth: 1 }
-                ]},
-                options: {
-                    indexAxis: 'y',
-                    scales: { x: { min: -90, max: 90 }, y: { display: false } }, // -90/90 ist realistischer
-                    animation: { duration: 0 },
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } }
-                }
+                type: 'bar', data: { labels: ['Neigung (X)', 'Seitenneigung (Y)'], datasets: [ { label: 'Grad', data: [0, 0], backgroundColor: ['#bb86fc', '#03dac6'], borderWidth: 1 } ]},
+                options: { indexAxis: 'y', scales: { x: { min: -90, max: 90 }, y: { display: false } }, animation: { duration: 0 }, maintainAspectRatio: false, plugins: { legend: { display: false } } }
             });
         }
     }
-
     function destroyCharts() {
         if (gpsChart) { gpsChart.destroy(); gpsChart = null; }
         if (orientationChart) { orientationChart.destroy(); orientationChart = null; }
         if (chartUpdateInterval) { clearInterval(chartUpdateInterval); chartUpdateInterval = null; }
     }
-
-    // Fügt Daten zu einem Chart hinzu und hält ihn auf 50 Punkte
     function addDataToChart(chart, label, dataArray) {
         if (!chart) return;
         chart.data.labels.push(label);
-        dataArray.forEach((value, index) => {
-            chart.data.datasets[index].data.push(value);
-        });
+        dataArray.forEach((value, index) => { chart.data.datasets[index].data.push(value); });
         if (chart.data.labels.length > CHART_MAX_DATA_POINTS) {
             chart.data.labels.shift();
             chart.data.datasets.forEach(dataset => { dataset.data.shift(); });
         }
         chart.update();
     }
-    
     function updateBarChart(chart, dataArray) {
         if (!chart) return;
         chart.data.datasets[0].data = dataArray;
         chart.update();
     }
-    
-    // --- v17/v18: Haupt-Chart-Update-Funktion ---
     function updateCharts() {
         if (!isLogging) return;
-        
-        const timeLabel = getTimestamp().slice(11, 19); // z.B. "14:30:05"
-
-        // 1. GPS- & G-Kraft-Chart füttern
-        addDataToChart(gpsChart, timeLabel, [
-            currentGpsAccuracy, 
-            currentGforce
-        ]);
-        
-        // 2. Orientierungs-Chart füttern
-        updateBarChart(orientationChart, [
-            currentOrientation.beta, 
-            currentOrientation.gamma
-        ]);
-        
-        // G-Kraft zurücksetzen (damit wir Peaks sehen, nicht Dauer-Rauschen)
+        const timeLabel = getTimestamp().slice(11, 19);
+        addDataToChart(gpsChart, timeLabel, [ currentGpsAccuracy, currentGforce ]);
+        updateBarChart(orientationChart, [ currentOrientation.beta, currentOrientation.gamma ]);
         currentGforce = 0.0; 
     }
 
 
     // ===================================
-    // --- SENSOR-HANDLER (v18) ---
+    // --- SENSOR-HANDLER (v19) ---
     // ===================================
 
-    // 1. GPS-Erfolg (v18: Aktualisiert Zustand mit ZAHL)
+    // 1. GPS-Erfolg (Identisch zu v18)
     function logPosition(position) { 
         const coords = position.coords;
         const speedKmh = (coords.speed ? coords.speed * 3.6 : 0).toFixed(1);
-        const accuracy = coords.accuracy; // v18: Als Zahl belassen
-        
+        const accuracy = coords.accuracy;
         const logData = [ `GPS-OK | Acc: ${accuracy.toFixed(1)}m`, `Speed: ${speedKmh} km/h` ];
         addLogEntry(logData.join(' | '));
         statusEl.textContent = `LOGGING... (GPS: ${accuracy.toFixed(1)}m)`;
-        
-        // v18: Zustand speichern
         currentGpsAccuracy = accuracy;
      }
 
-    // 2. GPS-Fehler
+    // 2. GPS-Fehler (Identisch zu v18)
     function logError(error) { 
-        // (Identisch zu v15)
         let message = '';
         switch(error.code) {
             case error.PERMISSION_DENIED: message = "GPS-Zugriff verweigert"; break;
@@ -265,9 +218,8 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Fehler: GPS-Problem!";
      }
     
-    // 3. v14: Netzwerk-Wächter (Polling)
+    // 3. v14: Netzwerk-Wächter (Polling) (Identisch zu v18)
     function checkNetworkState(isInitialCall = false) {
-        // (Identisch zu v15)
         if (!permissionsState.network) return; 
         try {
             const isOnline = navigator.onLine;
@@ -276,16 +228,9 @@ document.addEventListener("DOMContentLoaded", () => {
             else { const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
                 currentType = connection ? connection.type : 'cellular'; }
             
-            if (currentType === 'offline') {
-                liveDashboard.className = 'dashboard-offline'; networkStatusEl.textContent = 'STATUS: OFFLINE';
-            } else if (currentType === 'wifi') {
-                liveDashboard.className = 'dashboard-wifi'; networkStatusEl.textContent = 'NETZ: WIFI (VERBUNDEN?)';
-            } else if (currentType === 'cellular') {
-                liveDashboard.className = 'dashboard-cellular'; networkStatusEl.textContent = 'NETZ: MOBILFUNK';
-            } else {
-                liveDashboard.className = 'dashboard-unknown'; networkStatusEl.textContent = `NETZ: ${currentType.toUpperCase()}`;
-            }
-
+            // v19: Dieser Wächter ist jetzt *sekundär* zum WakeLock-Wächter.
+            // Wir loggen ihn, aber das Dashboard wird vom WakeLock gesteuert.
+            
             if (currentType !== lastNetworkType || isOnline !== lastOnlineStatus || isInitialCall) {
                 const logString = `NETZWERK-STATUS: Online: ${isOnline} | Typ: ${currentType}`;
                 if (isInitialCall) { addLogEntry(logString, 'info'); }
@@ -299,9 +244,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 4. v15: IP-Sniffer (Polling)
+    // 4. v15: IP-Sniffer (Polling) (Identisch zu v18)
     function checkLocalIP() {
-        // (Identisch zu v15)
         if (!permissionsState.webrtc) return;
         try {
             if (rtcPeerConnection) { rtcPeerConnection.close(); rtcPeerConnection = null; }
@@ -333,7 +277,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 5. Bewegungssensor (v18: Aktualisiert Zustand mit ZAHL)
+    // 5. Bewegungssensor (Identisch zu v18)
     function logDeviceMotion(event) {
         const now = Date.now();
         const acc = event.accelerationIncludingGravity;
@@ -348,11 +292,8 @@ document.addEventListener("DOMContentLoaded", () => {
         pushToFlightRecorder(now, 'MOTION', dataString);
         
         const gForce = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
-        
-        // v18: Zustand speichern
         currentGforce = gForce;
         
-        // Jolt-Detection (bleibt)
         if (gForce > JOLT_THRESHOLD_MS2 && (now - lastJoltTime > JOLT_COOLDOWN_MS)) {
             lastJoltTime = now;
             const reason = `HARTER STOSS ERKANNT (G-Force: ${gForce.toFixed(1)})`;
@@ -360,7 +301,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 6. Orientierungssensor (v18: Aktualisiert Zustand mit ZAHL)
+    // 6. Orientierungssensor (Identisch zu v18)
     function logDeviceOrientation(event) {
         const now = Date.now();
         if (!orientationSensorHasFired) {
@@ -373,116 +314,123 @@ document.addEventListener("DOMContentLoaded", () => {
         const dataString = `Alpha(Z): ${event.alpha.toFixed(1)} | Beta(X): ${event.beta.toFixed(1)} | Gamma(Y): ${event.gamma.toFixed(1)}`;
         pushToFlightRecorder(now, 'ORIENTATION', dataString);
         
-        // v18: Zustand speichern
-        currentOrientation = { 
-            beta: event.beta, 
-            gamma: event.gamma
-        };
+        currentOrientation = { beta: event.beta, gamma: event.gamma };
     }
     
-    // 7. v14: Anti-Schlaf-Hack (Stilles Audio)
-    function startAntiSleepAudio() {
-        // (Identisch zu v15)
+    // 7. v19: NEUER "Anti-Schlaf-Hack" (Wake Lock API)
+    async function startWakeLock() {
+        if (!permissionsState.wakelock) {
+            addLogEntry("DEBUG: WakeLock-API nicht verfügbar. Überspringe.", 'warn');
+            return;
+        }
         try {
-            if (antiSleepContext) { antiSleepContext.close(); } 
-            antiSleepContext = new (window.AudioContext || window.webkitAudioContext)();
-            antiSleepOscillator = antiSleepContext.createOscillator();
-            antiSleepOscillator.type = 'sine'; antiSleepOscillator.frequency.setValueAtTime(1, antiSleepContext.currentTime); 
-            const gainNode = antiSleepContext.createGain();
-            gainNode.gain.setValueAtTime(0.0, antiSleepContext.currentTime); 
-            antiSleepOscillator.connect(gainNode); gainNode.connect(antiSleepContext.destination);
-            antiSleepOscillator.start();
-            addLogEntry("DEBUG: 'Anti-Schlaf-Hack' (Stilles Audio) gestartet.", 'info');
-        } catch (e) { addLogEntry(`FEHLER: 'Anti-Schlaf-Hack' konnte nicht gestartet werden: ${e.message}`, 'error'); }
+            wakeLockSentinel = await navigator.wakeLock.request('screen');
+            liveDashboard.className = 'dashboard-active';
+            wakeLockStatusEl.textContent = 'WAKE LOCK: AKTIV';
+            addLogEntry("DEBUG: 'WakeLock (Anti-Schlaf)' erfolgreich angefordert.", 'info');
+            
+            // Listener, falls der Lock vom System unterbrochen wird
+            wakeLockSentinel.onrelease = () => {
+                addLogEntry("DEBUG: 'WakeLock' wurde vom System freigegeben (z.B. Tab unsichtbar).", 'warn');
+                liveDashboard.className = 'dashboard-offline';
+                wakeLockStatusEl.textContent = 'WAKE LOCK: INAKTIV';
+            };
+        } catch (err) {
+            addLogEntry(`FEHLER: 'WakeLock' konnte nicht angefordert werden: ${err.message}`, 'error');
+            liveDashboard.className = 'dashboard-offline';
+            wakeLockStatusEl.textContent = 'WAKE LOCK: FEHLER';
+        }
     }
-    function stopAntiSleepAudio() {
-         // (Identisch zu v15)
-         try {
-            if (antiSleepOscillator) { antiSleepOscillator.stop(); antiSleepOscillator = null; }
-            if (antiSleepContext) { antiSleepContext.close(); antiSleepContext = null; }
-            addLogEntry("DEBUG: 'Anti-Schlaf-Hack' (Stilles Audio) gestoppt.", 'info');
-         } catch (e) { addLogEntry(`FEHLER: 'Anti-Schlaf-Hack' konnte nicht gestoppt werden: ${e.message}`, 'error'); }
+    
+    async function stopWakeLock() {
+         if (wakeLockSentinel) {
+            try {
+                await wakeLockSentinel.release();
+                wakeLockSentinel = null;
+                addLogEntry("DEBUG: 'WakeLock' (Anti-Schlaf) gestoppt.", 'info');
+            } catch (err) {
+                addLogEntry(`FEHLER: 'WakeLock' konnte nicht gestoppt werden: ${err.message}`, 'error');
+            }
+        }
     }
 
+
     // ===================================
-    // --- STEUERUNGS-FUNKTIONEN (v18) ---
+    // --- STEUERUNGS-FUNKTIONEN (v19) ---
     // ===================================
 
-    // Phase A: Pre-Flight Check (v18: OHNE Screen-Lock)
+    // Phase A: Pre-Flight Check (v19: Fügt WakeLock-Check hinzu)
     async function requestAllPermissions() {
-        addLogEntry("Phase A: Fordere Berechtigungen an (v18)...");
+        addLogEntry("Phase A: Fordere Berechtigungen an (v19)...");
         statusEl.textContent = "Berechtigungen anfordern...";
         const useFallback = fallbackToggle.checked;
-        if (useFallback) { addLogEntry("DEBUG v18: 'Alte API erzwingen' ist AKTIV. Überspringe 'requestPermission'.", 'warn'); }
+        if (useFallback) { addLogEntry("DEBUG v19: 'Alte API erzwingen' ist AKTIV. Überspringe 'requestPermission'.", 'warn'); }
+
+        // --- WakeLock (v19) ---
+        addLogEntry("DEBUG v19: Prüfe WakeLock-API...");
+        if ('wakeLock' in navigator) {
+            permissionsState.wakelock = true; addLogEntry("DEBUG v19: BERECHTIGUNG: WakeLock-API gefunden.");
+        } else { addLogEntry("BERECHTIGUNG: WakeLock-API wird nicht unterstützt!", 'warn'); }
 
         // --- GPS ---
-        addLogEntry("DEBUG v18: Fordere GPS an...");
+        addLogEntry("DEBUG v19: Fordere GPS an...");
         try {
             if (!navigator.geolocation) throw new Error("Geolocation wird nicht unterstützt.");
             await new Promise((resolve, reject) => { navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 }); });
-            permissionsState.gps = true; addLogEntry("DEBUG v18: BERECHTIGUNG: GPS erteilt.");
+            permissionsState.gps = true; addLogEntry("DEBUG v19: BERECHTIGUNG: GPS erteilt.");
         } catch (err) { addLogEntry(`BERECHTIGUNG: GPS-Fehler (${err.message})`, 'error'); permissionsState.gps = false; }
-        addLogEntry("DEBUG v18: GPS-Anfrage abgeschlossen.");
+        addLogEntry("DEBUG v19: GPS-Anfrage abgeschlossen.");
         
         if (!permissionsState.gps) return false;
 
         // --- Netzwerk (v14-Stil) ---
-        addLogEntry("DEBUG v18: Prüfe Netzwerk-API...");
         if ('connection' in navigator || 'mozConnection' in navigator || 'webkitConnection' in navigator) {
-            permissionsState.network = true; addLogEntry("DEBUG v18: BERECHTIGUNG: Netzwerk-API gefunden.");
+            permissionsState.network = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Netzwerk-API gefunden.");
         } else { addLogEntry("BERECHTIGUNG: Netzwerk-API wird nicht unterstützt!", 'warn'); }
 
         // --- WebRTC (v15-Stil) ---
-        addLogEntry("DEBUG v18: Prüfe WebRTC-API (IP-Sniffer)...");
         if ('RTCPeerConnection' in window || 'webkitRTCPeerConnection' in window) {
-            permissionsState.webrtc = true; addLogEntry("DEBUG v18: BERECHTIGUNG: WebRTC-API gefunden.");
+            permissionsState.webrtc = true; addLogEntry("DEBUG v19: BERECHTIGUNG: WebRTC-API gefunden.");
         } else { addLogEntry("BERECHTIGUNG: WebRTC-API wird nicht unterstützt!", 'warn'); }
-        addLogEntry("DEBUG v18: Netzwerk-Checks abgeschlossen.");
         
         // --- Bewegung ---
-        addLogEntry("DEBUG v18: Prüfe Bewegungssensor...");
         if (useFallback) {
-            permissionsState.motion = true; addLogEntry("DEBUG v18: BERECHTIGUNG: Bewegungssensor (Fallback erzwungen) OK.");
+            permissionsState.motion = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Bewegungssensor (Fallback erzwungen) OK.");
         } else if (typeof(DeviceMotionEvent.requestPermission) === 'function') {
-            addLogEntry("DEBUG v18: 'requestPermission' Motion-API erkannt, fordere an...");
             try {
                 const state = await DeviceMotionEvent.requestPermission();
                 permissionsState.motion = (state === 'granted');
-                addLogEntry(`DEBUG v18: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
-            } catch (err) { addLogEntry(`DEBUG v18: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error'); permissionsState.motion = false; }
+                addLogEntry(`DEBUG v19: BERECHTIGUNG: Bewegungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+            } catch (err) { addLogEntry(`DEBUG v19: BERECHTIGUNG: Bewegungssensor-Fehler: ${err.message}`, 'error'); permissionsState.motion = false; }
         } else if ('DeviceMotionEvent' in window) {
-             permissionsState.motion = true; addLogEntry("DEBUG v18: BERECHTIGUNG: Bewegungssensor (Implizit/Alt) OK.");
+             permissionsState.motion = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Bewegungssensor (Implizit/Alt) OK.");
         } else { addLogEntry("BERECHTIGUNG: Bewegungssensor wird nicht unterstützt!", 'error'); permissionsState.motion = false; }
-        addLogEntry("DEBUG v18: Bewegungssensor-Check abgeschlossen.");
 
         // --- Orientierung ---
-        addLogEntry("DEBUG v18: Füge kleine Pause ein (500ms)..."); await delay(500); 
-        addLogEntry("DEBUG v18: Prüfe Orientierungssensor...");
+        addLogEntry("DEBUG v19: Füge kleine Pause ein (500ms)..."); await delay(500); 
         if (useFallback) {
-             permissionsState.orientation = true; addLogEntry("DEBUG v18: BERECHTIGUNG: Orientierungssensor (Fallback erzwungen) OK.");
+             permissionsState.orientation = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Orientierungssensor (Fallback erzwungen) OK.");
         } else if (typeof(DeviceOrientationEvent.requestPermission) === 'function') {
-             addLogEntry("DEBUG v18: 'requestPermission' Orientation-API erkannt, fordere an...");
             try {
                 const state = await DeviceOrientationEvent.requestPermission();
                 permissionsState.orientation = (state === 'granted');
-                addLogEntry(`DEBUG v18: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
-            } catch (err) { addLogEntry(`DEBUG v18: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error'); permissionsState.orientation = false; }
+                addLogEntry(`DEBUG v19: BERECHTIGUNG: Orientierungssensor-Status: '${state}'`, (state === 'granted' ? 'info' : 'warn'));
+            } catch (err) { addLogEntry(`DEBUG v19: BERECHTIGUNG: Orientierungssensor-Fehler: ${err.message}`, 'error'); permissionsState.orientation = false; }
         } else if ('DeviceOrientationEvent' in window) {
-            permissionsState.orientation = true; addLogEntry("DEBUG v18: BERECHTIGUNG: Orientierungssensor (Implizit/Alt) OK.");
+            permissionsState.orientation = true; addLogEntry("DEBUG v19: BERECHTIGUNG: Orientierungssensor (Implizit/Alt) OK.");
         } else { addLogEntry("BERECHTIGUNG: Orientierungssensor wird nicht unterstützt!", 'error'); permissionsState.orientation = false; }
-        addLogEntry("DEBUG v18: Orientierungssensor-Check abgeschlossen.");
         
         addLogEntry("Phase A: Pre-Flight Check beendet.");
         return permissionsState.gps; 
     }
 
-    // Phase B: Startet alle Logger (v18)
+    // Phase B: Startet alle Logger (v19)
     async function startAllLoggers() {
-        addLogEntry("Phase B: Starte alle Logger (v18)...");
+        addLogEntry("Phase B: Starte alle Logger (v19)...");
         statusEl.textContent = "LOGGING... (Starte Sensoren)";
 
-        // 1. Anti-Schlaf-Audio STARTEN
-        startAntiSleepAudio();
+        // 1. v19: Wake Lock STARTEN
+        await startWakeLock();
         
         // 2. Charts initialisieren
         initCharts();
@@ -529,7 +477,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ===================================
-    // --- BUTTON-HANDLER (v18) ---
+    // --- BUTTON-HANDLER (v19) ---
     // ===================================
 
     // PRE-FLIGHT CHECK
@@ -538,7 +486,7 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Prüfe Berechtigungen...";
         logEntries = []; flightRecorderBuffer = []; logAreaEl.value = "";
         lastNetworkType = "unknown"; lastOnlineStatus = navigator.onLine; lastLocalIP = "";
-        permissionsState = { gps: false, motion: false, orientation: false, network: false, webrtc: false };
+        permissionsState = { gps: false, motion: false, orientation: false, network: false, webrtc: false, wakelock: false };
         v16_chartErrorLogged = false;
         
         const gpsOk = await requestAllPermissions();
@@ -560,7 +508,7 @@ document.addEventListener("DOMContentLoaded", () => {
         lastNetworkType = "unknown"; lastOnlineStatus = navigator.onLine; lastLocalIP = "";
         currentGpsAccuracy = 0.0; currentGforce = 0.0; currentOrientation = { beta: 0.0, gamma: 0.0 };
         
-        addLogEntry(`Logging-Prozess angefordert (v18)...`);
+        addLogEntry(`Logging-Prozess angefordert (v19)...`);
         startAllLoggers();
     };
 
@@ -569,20 +517,18 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!isLogging) return;
         
         // Alle Timer und Listener stoppen
-        stopAntiSleepAudio();
+        stopWakeLock(); // v19
         if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
         if (networkCheckInterval) clearInterval(networkCheckInterval); 
         if (ipSnifferInterval) clearInterval(ipSnifferInterval);
-        if (chartUpdateInterval) clearInterval(chartUpdateInterval); // v17/v18
+        if (chartUpdateInterval) clearInterval(chartUpdateInterval); 
         if (rtcPeerConnection) { rtcPeerConnection.close(); rtcPeerConnection = null; }
 
         window.removeEventListener('devicemotion', logDeviceMotion);
         window.removeEventListener('deviceorientation', logDeviceOrientation);
         
-        // v18: Charts zerstören
+        // Charts zerstören
         destroyCharts();
-        
-        // v18: Screen-Lock-Code ist entfernt
         
         isLogging = false;
         geoWatchId = null; networkCheckInterval = null; ipSnifferInterval = null; chartUpdateInterval = null;
@@ -598,7 +544,7 @@ document.addEventListener("DOMContentLoaded", () => {
         downloadBtn.disabled = false; 
         fallbackToggle.disabled = false; 
         liveDashboard.className = 'dashboard-unknown';
-        networkStatusEl.textContent = 'BEREIT';
+        wakeLockStatusEl.textContent = 'BEREIT';
     };
 
     // ABSTURZ MARKIEREN
@@ -614,7 +560,7 @@ document.addEventListener("DOMContentLoaded", () => {
     downloadBtn.onclick = () => { 
         if (logEntries.length === 0) { alert("Keine Logs zum Herunterladen vorhanden."); return; }
         const logData = logEntries.join('\n');
-        const filename = `waze_log_v18_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
+        const filename = `waze_log_v19_${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.txt`;
         const blob = new Blob([logData], { type: 'text/plain;charset=utf-8' }); 
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -629,5 +575,5 @@ document.addEventListener("DOMContentLoaded", () => {
     crashBtn.disabled = true;
     downloadBtn.disabled = true;
     liveDashboard.className = 'dashboard-unknown';
-    networkStatusEl.textContent = 'BEREIT';
+    wakeLockStatusEl.textContent = 'BEREIT';
 });
